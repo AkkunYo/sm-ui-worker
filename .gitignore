@@ -25,3 +25,4 @@ agent/bin/
 .vscode/
 *.swp
 *.swo
+test-results
