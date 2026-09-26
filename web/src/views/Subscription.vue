@@ -201,7 +201,7 @@ const daysLeft = computed(() => profile.value?.expire_at ? Math.max(0, Math.ceil
 const statusText = computed(() => !profile.value?.status ? '已停用' : profile.value.expire_at && new Date(profile.value.expire_at) <= new Date() ? '已到期' : !active.value ? '流量已耗尽' : '正常')
 const subURL = computed(() => {
   if (!profile.value) return ''
-  const base = `${window.location.origin}/sub/${encodeURIComponent(profile.value.sub_token)}`
+  const base = `${window.location.origin}/sub/${encodeURIComponent(profile.value.username)}/${encodeURIComponent(profile.value.sub_token)}`
   if (isAdmin.value && adminMode.value === 'all') {
     return `${base}?all=true`
   }
