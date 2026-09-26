@@ -1,0 +1,27 @@
+{
+  "name": "sm-ui-web",
+  "private": true,
+  "version": "0.2.3",
+  "type": "module",
+  "scripts": {
+    "test": "node --test tests/api.test.js",
+    "test:e2e": "playwright test",
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "lucide-vue-next": "^0.446.0",
+    "qrcode": "1.5.4",
+    "vue": "^3.5.10",
+    "vue-router": "^4.4.5"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.63.0",
+    "@vitejs/plugin-vue": "^5.1.4",
+    "autoprefixer": "^10.4.20",
+    "postcss": "^8.4.47",
+    "tailwindcss": "^3.4.13",
+    "vite": "^5.4.8"
+  }
+}
