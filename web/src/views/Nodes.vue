@@ -291,6 +291,19 @@
 
           <div>
             <label class="block text-xs font-semibold text-slate-300 uppercase tracking-wider mb-1.5">
+              Hysteria 2 跳跃端口范围 (可选)
+            </label>
+            <input
+              v-model="addForm.hop_ports"
+              type="text"
+              class="w-full px-4 py-2.5 rounded-xl bg-slate-950 border border-slate-800 text-slate-100 placeholder-slate-500 text-sm focus:border-emerald-500 focus:outline-none font-mono"
+              placeholder="例如: 22200-22300"
+            />
+            <p class="text-[11px] text-slate-500 mt-1">填入端口范围（如 22200-22300），订阅中将自动生成带端口跳跃的 Hy2 节点</p>
+          </div>
+
+          <div>
+            <label class="block text-xs font-semibold text-slate-300 uppercase tracking-wider mb-1.5">
               指定公网出口 IP 或域名 (可选)
             </label>
             <input
@@ -526,6 +539,19 @@
 
           <div>
             <label class="block text-xs font-semibold text-slate-300 uppercase tracking-wider mb-1.5">
+              Hysteria 2 跳跃端口范围 (可选)
+            </label>
+            <input
+              v-model="editForm.hop_ports"
+              type="text"
+              class="w-full px-4 py-2.5 rounded-xl bg-slate-950 border border-slate-800 text-slate-100 text-sm focus:border-emerald-500 focus:outline-none font-mono"
+              placeholder="例如: 22200-22300"
+            />
+            <p class="text-[11px] text-slate-500 mt-1">填入端口范围（如 22200-22300），订阅中将自动生成带端口跳跃的 Hy2 节点</p>
+          </div>
+
+          <div>
+            <label class="block text-xs font-semibold text-slate-300 uppercase tracking-wider mb-1.5">
               指定公网出口 IP 或域名 (可选)
             </label>
             <input
@@ -623,6 +649,7 @@ const addForm = reactive({
   name: '',
   server_ip: '',
   proxy_port: 443,
+  hop_ports: ''
 })
 
 const dockerRunCommand = computed(() => {
@@ -712,6 +739,7 @@ function openAddModal() {
   addForm.name = ''
   addForm.server_ip = ''
   addForm.proxy_port = 443
+  addForm.hop_ports = ''
   addForm.owner_id = currentUser.value?.id || null
   showAddModal.value = true
 }
@@ -829,6 +857,7 @@ const editForm = reactive({
   name: '',
   server_ip: '',
   proxy_port: 443,
+  hop_ports: '',
   token: '',
   is_local: false
 })
@@ -838,6 +867,7 @@ function openEditModal(node) {
   editForm.name = node.name
   editForm.server_ip = node.server_ip || ''
   editForm.proxy_port = node.proxy_port || 443
+  editForm.hop_ports = node.hop_ports || ''
   editForm.token = node.token || ''
   editForm.is_local = Boolean(node.is_local)
   showEditModal.value = true
@@ -850,6 +880,7 @@ async function saveEditNode() {
       name: editForm.name,
       server_ip: editForm.server_ip,
       proxy_port: editForm.proxy_port,
+      hop_ports: editForm.hop_ports
     }
     const res = await request(`/api/v1/nodes/${editForm.id}`, {
       method: 'PUT',

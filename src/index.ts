@@ -375,13 +375,14 @@ app.post('/api/v1/nodes', authMiddleware, async (c) => {
 
   const token = generateUUID();
   const proxyPort = parseInt(body.proxy_port, 10) || 443;
+  const hopPorts = (body.hop_ports || '').trim();
   const protocol = (body.protocol || 'all').toLowerCase();
   const serverIp = (body.server_ip || '').trim();
 
   const res = await c.env.DB.prepare(`
-    INSERT INTO nodes (owner_id, name, server_ip, proxy_port, protocol, token, status)
-    VALUES (?, ?, ?, ?, ?, ?, 'offline')
-  `).bind(ownerId, name, serverIp, proxyPort, protocol, token).run();
+    INSERT INTO nodes (owner_id, name, server_ip, proxy_port, hop_ports, protocol, token, status)
+    VALUES (?, ?, ?, ?, ?, ?, ?, 'offline')
+  `).bind(ownerId, name, serverIp, proxyPort, hopPorts, protocol, token).run();
 
   await bumpConfigVersion(c.env.DB);
 
@@ -395,6 +396,7 @@ app.post('/api/v1/nodes', authMiddleware, async (c) => {
     name,
     server_ip: serverIp,
     proxy_port: proxyPort,
+    hop_ports: hopPorts,
     protocol,
     token,
     status: 'offline',
@@ -418,13 +420,14 @@ app.put('/api/v1/nodes/:id', authMiddleware, async (c) => {
   const name = body.name ? body.name.trim() : node.name;
   const serverIp = body.server_ip !== undefined ? body.server_ip.trim() : node.server_ip;
   const proxyPort = body.proxy_port ? parseInt(body.proxy_port, 10) : node.proxy_port;
+  const hopPorts = body.hop_ports !== undefined ? body.hop_ports.trim() : (node.hop_ports || '');
   const protocol = body.protocol ? body.protocol.toLowerCase() : node.protocol;
   const status = body.status ? body.status.toLowerCase() : node.status;
   const ownerId = (currentUser.role === 'admin' && body.owner_id) ? parseInt(body.owner_id, 10) : node.owner_id;
 
   await c.env.DB.prepare(`
-    UPDATE nodes SET owner_id = ?, name = ?, server_ip = ?, proxy_port = ?, protocol = ?, status = ? WHERE id = ?
-  `).bind(ownerId, name, serverIp, proxyPort, protocol, status, id).run();
+    UPDATE nodes SET owner_id = ?, name = ?, server_ip = ?, proxy_port = ?, hop_ports = ?, protocol = ?, status = ? WHERE id = ?
+  `).bind(ownerId, name, serverIp, proxyPort, hopPorts, protocol, status, id).run();
 
   await bumpConfigVersion(c.env.DB);
   return c.json({ success: true });
@@ -702,6 +705,19 @@ app.get('/api/v1/subscription', authMiddleware, async (c) => {
           protocol: 'hy2',
           uri: hy2URI
         });
+
+        // Hysteria 2 Port Hopping URI
+        if (node.hop_ports && node.hop_ports.trim()) {
+          const hopName = `${prefix}${node.name}-Hy2-Hop-${targetIP}`;
+          const hopRemark = encodeURIComponent(hopName);
+          const hopPortRange = node.hop_ports.trim();
+          const hopURI = `hysteria2://${encodeURIComponent(hy2Password)}@${targetIP}:${hopPortRange}?alpn=h3&insecure=1&allowInsecure=1&mport=${encodeURIComponent(hopPortRange)}&sni=${encodeURIComponent(hy2Sni)}&upmbps=${upMbps}&downmbps=${downMbps}#${hopRemark}`;
+          links.push({
+            name: hopName,
+            protocol: 'hy2',
+            uri: hopURI
+          });
+        }
       }
     }
   }

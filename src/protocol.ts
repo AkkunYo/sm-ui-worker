@@ -4,6 +4,7 @@ export interface NodeRecord {
   name: string;
   server_ip: string;
   proxy_port: number;
+  hop_ports?: string;
   protocol: string; // 'all' | 'vless' | 'hysteria2'
   token: string;
   status: string;
