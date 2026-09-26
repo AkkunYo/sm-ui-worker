@@ -254,16 +254,26 @@ app.post('/api/v1/node/sync', async (c) => {
     node.id
   ).run();
 
-  // Process traffic reporting deltas: attribute to node owner!
+  // Process traffic reporting deltas: attribute to user by username or fallback to node owner!
   if (Array.isArray(body.traffic_deltas)) {
     for (const d of body.traffic_deltas) {
-      if (d.uplink > 0 || d.downlink > 0) {
-        await c.env.DB.prepare(`
+      if ((d.uplink > 0 || d.downlink > 0) && d.username) {
+        const res = await c.env.DB.prepare(`
           UPDATE users SET
             used_up_bytes = used_up_bytes + ?,
             used_down_bytes = used_down_bytes + ?
-          WHERE id = ?
-        `).bind(d.uplink || 0, d.downlink || 0, node.owner_id).run();
+          WHERE username = ?
+        `).bind(d.uplink || 0, d.downlink || 0, d.username).run();
+
+        // If user not found by username, fallback to node owner
+        if (!res.meta || res.meta.changes === 0) {
+          await c.env.DB.prepare(`
+            UPDATE users SET
+              used_up_bytes = used_up_bytes + ?,
+              used_down_bytes = used_down_bytes + ?
+            WHERE id = ?
+          `).bind(d.uplink || 0, d.downlink || 0, node.owner_id).run();
+        }
       }
     }
   }

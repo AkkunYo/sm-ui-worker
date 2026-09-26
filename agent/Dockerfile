@@ -2,7 +2,8 @@
 FROM golang:alpine AS builder
 WORKDIR /app
 ARG TARGETOS TARGETARCH
-COPY go.mod ./
+COPY go.mod go.sum* ./
+RUN go mod download
 COPY main.go ./
 RUN CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH} go build -ldflags="-s -w" -o /bin/sm-node main.go
 
