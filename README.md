@@ -26,19 +26,23 @@
 
 ## 🚀 部署指南 (Cloudflare Worker 主控)
 
-### 方式一：Cloudflare Dashboard Git 绑定直连部署 (推荐，零运维)
+### 方式一：Cloudflare 原生 Git 持续部署 (推荐，彻底免 API Token)
 
-1. **Fork 本仓库** 到你的 GitHub 账号。
-2. 登录 [Cloudflare 控制台](https://dash.cloudflare.com/)：
-   * 点击左侧 **Workers & Pages** -> **Create application** -> **Workers**。
-   * 选择 **Connect to Git** 绑定刚刚 Fork 的 `sm-ui-worker` 仓库。
-3. **创建与绑定 D1 数据库**：
-   * 在 Cloudflare 控制台左侧点击 **D1 SQL Database** -> **Create database**，名称填 `sm-ui-db`。
-   * 点击控制台中的 **Console**，粘贴项目中的 `schema.sql` 内容并点击 **Execute** 执行初始化建表。
-   * 返回你的 Worker 项目 -> **Settings** -> **Bindings** -> 点击 **Add** -> 选择 **D1 database**：
-     * **Variable name**：`DB`
-     * **D1 database**：选择刚刚创建的 `sm-ui-db`
-4. **点击 Save and Deploy**：Cloudflare 自动完成前端静态资源构建与 API 发布，获得专属主控域名（例如: `https://sm-ui-worker.yourname.workers.dev` 或自定义域名）。
+1. **准备 D1 数据库**：
+   在 Cloudflare 控制台左侧点击 **D1 SQL Database** -> **Create database**（名称为 `sm-ui-db`），在 **Console** 中粘贴执行 `schema.sql` 完成初始化建表。
+2. **在 Cloudflare 关联 GitHub 仓库**：
+   * 打开 Cloudflare 控制台 -> **Workers & Pages** -> 选择 `sm-ui-worker`。
+   * 进入 **Settings** -> **Builds** (构建) -> 点击 **Connect to Git** 绑定 `AkkunYo/sm-ui-worker` 仓库。
+   * 构建设置：
+     * **Build command**：`npm run build`
+     * **Deploy command**：`npx wrangler deploy`
+     * **Root directory**：`/`
+3. **绑定 D1 数据库**：
+   进入 Worker 项目设置 **Settings** -> **Bindings** -> 确认已有或添加 D1 绑定：
+   * **Variable name**：`DB`
+   * **D1 database**：选择 `sm-ui-db`
+4. **一键自动持续交付**：
+   后续本地任意 `git push origin main`，Cloudflare 云端原生容器秒级拉取、构建前端 Vue 3 SPA 并部署上线。彻底免去任何 Cloudflare API Token 与 GitHub Secrets 配置，纯净开源安全！
 
 ---
 
