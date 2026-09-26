@@ -114,11 +114,12 @@ export function buildSubscription(
           name: 'AUTO',
           type: 'url-test',
           proxies: fallbackList,
-          url: 'http://www.gstatic.com/generate_204',
+          url: 'http://cp.cloudflare.com/generate_204',
           interval: 300
         }
       ],
       rules: [
+        'DST-PORT,22,DIRECT',
         'GEOIP,LAN,DIRECT',
         'GEOIP,CN,DIRECT',
         'MATCH,PROXIES'
@@ -199,7 +200,7 @@ export function buildSubscription(
           type: 'urltest',
           tag: 'auto',
           outbounds: outboundTags.length > 0 ? outboundTags : ['direct'],
-          url: 'http://www.gstatic.com/generate_204',
+          url: 'http://cp.cloudflare.com/generate_204',
           interval: '3m'
         },
         ...outbounds,
