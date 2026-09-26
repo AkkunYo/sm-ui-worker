@@ -253,14 +253,32 @@ function setupSSE() {
   }
 }
 
+function handleVisibilityChange() {
+  if (document.hidden) {
+    if (refreshTimer) {
+      clearInterval(refreshTimer)
+      refreshTimer = null
+    }
+  } else {
+    refreshData()
+    if (!refreshTimer) {
+      refreshTimer = setInterval(refreshData, 30000)
+    }
+  }
+}
+
 onMounted(() => {
   refreshData()
   setupSSE()
-  refreshTimer = setInterval(refreshData, 10000)
+  refreshTimer = setInterval(refreshData, 30000)
+  document.addEventListener('visibilitychange', handleVisibilityChange)
 })
 
 onUnmounted(() => {
-  clearInterval(refreshTimer)
+  if (refreshTimer) {
+    clearInterval(refreshTimer)
+  }
+  document.removeEventListener('visibilitychange', handleVisibilityChange)
   if (eventSource) {
     eventSource.close()
   }

@@ -81,7 +81,7 @@ func main() {
 	flag.StringVar(&cfg.MasterURL, "master", os.Getenv("MASTER_URL"), "Cloudflare Worker Master API URL (e.g. https://sm-ui.your-worker.workers.dev)")
 	flag.StringVar(&cfg.NodeToken, "token", os.Getenv("NODE_TOKEN"), "Node HostId Token UUID")
 	flag.StringVar(&cfg.BaseDir, "dir", "/var/lib/sm-ui", "Base directory for runtime configs and certs")
-	intervalSec := flag.Int("interval", 10, "Sync polling interval in seconds")
+	intervalSec := flag.Int("interval", 30, "Sync polling interval in seconds")
 	flag.Parse()
 
 	if envDir := os.Getenv("BASE_DIR"); envDir != "" {

@@ -1,15 +1,15 @@
 <template>
   <div class="p-8 space-y-8 max-w-2xl mx-auto">
     <div>
-      <h1 class="text-2xl font-bold tracking-tight text-white">管理员设置 (Account)</h1>
+      <h1 class="text-2xl font-bold tracking-tight text-white">账号设置 (Account)</h1>
       <p class="text-sm text-slate-400 mt-1">
-        修改管理员登录用户名与访问密码。
+        管理个人登录密码与账号安全。
       </p>
     </div>
 
     <!-- Admin Profile Form -->
     <div class="bg-slate-900 border border-slate-800 rounded-2xl p-6 space-y-6 shadow-xl">
-      <PageSkeleton v-if="loadingProfile" label="正在加载管理员信息…" />
+      <PageSkeleton v-if="loadingProfile" label="正在加载账号信息…" />
       <div v-else-if="profileLoadError" role="alert" class="text-sm text-rose-300">
         {{ profileLoadError }}
         <button type="button" @click="loadProfile" class="ml-2 underline">重新加载</button>
@@ -18,22 +18,23 @@
         <div>
           <h2 class="text-base font-semibold text-white mb-4 flex items-center space-x-2">
             <span class="w-2 h-2 rounded-full bg-blue-500"></span>
-            <span>管理员账号与密码修改</span>
+            <span>账号信息与密码修改</span>
           </h2>
 
           <div class="space-y-4">
             <div>
-              <label for="admin-username" class="block text-xs font-semibold text-slate-300 uppercase tracking-wider mb-1.5">
-                管理员用户名 <span class="text-rose-400">*</span>
+              <label for="account-username" class="block text-xs font-semibold text-slate-300 uppercase tracking-wider mb-1.5">
+                用户名
               </label>
               <input
-                id="admin-username"
+                id="account-username"
                 v-model="profileForm.username"
                 type="text"
-                required
-                class="w-full px-4 py-2.5 rounded-xl bg-slate-950 border border-slate-800 text-slate-100 text-sm focus:border-blue-500 focus:outline-none"
-                placeholder="输入管理员用户名"
+                disabled
+                class="w-full px-4 py-2.5 rounded-xl bg-slate-950/60 border border-slate-800 text-slate-400 text-sm cursor-not-allowed select-none"
+                placeholder="用户名"
               />
+              <p class="text-[11px] text-slate-500 mt-1">用户名不可修改，由系统管理员分配维护</p>
             </div>
 
             <div>
@@ -77,14 +78,14 @@
         </div>
 
         <div class="flex items-center justify-between pt-4 border-t border-slate-800">
-          <p class="text-xs text-slate-500">保存后将重新登录，代理密码不受影响</p>
+          <p class="text-xs text-slate-500">修改密码后将重新登录，节点代理凭据不受影响</p>
           <button
             type="submit"
             :disabled="savingProfile"
             class="px-5 py-2.5 rounded-xl bg-blue-500 hover:bg-blue-600 text-white font-semibold text-sm transition disabled:opacity-50 shadow-lg shadow-blue-500/20"
           >
             <span v-if="savingProfile">正在保存...</span>
-            <span v-else>更新管理员信息</span>
+            <span v-else>更新密码</span>
           </button>
         </div>
       </form>
