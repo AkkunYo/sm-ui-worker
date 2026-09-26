@@ -7,13 +7,14 @@
   "assets": {
     "directory": "./web/dist",
     "binding": "ASSETS",
-    "not_found_handling": "single-page-application"
+    "not_found_handling": "single-page-application",
+    "run_worker_first": true
   },
   "d1_databases": [
     {
       "binding": "DB",
       "database_name": "sm-ui-db",
-      "database_id": "sm-ui-db-local"
+      "database_id": "placeholder-d1-database-id"
     }
   ]
 }
