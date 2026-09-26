@@ -55,7 +55,6 @@
                   </button>
                 </div>
               </th>
-              <th class="px-5 py-3.5 font-semibold">状态 / 延迟</th>
               <th class="px-5 py-3.5 font-semibold">CPU</th>
               <th class="px-5 py-3.5 font-semibold">内存</th>
               <th class="px-5 py-3.5 font-semibold">运行时长</th>
@@ -63,7 +62,7 @@
           </thead>
           <tbody class="divide-y divide-slate-800">
             <tr v-if="nodes.length === 0">
-              <td :colspan="isAdmin ? 8 : 7" class="px-6 py-12 text-center text-slate-500">
+              <td :colspan="isAdmin ? 7 : 6" class="px-6 py-12 text-center text-slate-500">
                 暂无接入主机，点击右上角“添加接入主机”生成专属 UUID 与一键纳管指令。
               </td>
             </tr>
@@ -115,7 +114,7 @@
                 </span>
               </td>
 
-              <!-- 2. Name -->
+              <!-- 2. Name & Status/Latency -->
               <td class="px-5 py-3.5">
                 <div>
                   <div class="flex items-center space-x-2">
@@ -125,9 +124,37 @@
                       class="px-1.5 py-0.5 rounded text-[10px] font-semibold bg-indigo-500/15 text-indigo-400 border border-indigo-500/30"
                     >本机 Master</span>
                   </div>
-                  <div class="text-[11px] text-slate-500 font-mono mt-0.5 select-all">
-                    HostId: {{ node.token || '-' }}
+                  <!-- Status & Latency indicator replacing HostId -->
+                  <div class="flex items-center space-x-1.5 mt-1">
+                    <span
+                      v-if="node.status === 'disabled'"
+                      class="inline-flex items-center space-x-1 text-slate-500 text-xs"
+                    >
+                      <span class="w-1.5 h-1.5 rounded-full bg-slate-600"></span>
+                      <span class="text-[11px]">已停用</span>
+                    </span>
+                    <div
+                      v-else-if="node.status === 'online'"
+                      class="inline-flex items-center space-x-1.5"
+                    >
+                      <span class="relative flex h-2 w-2">
+                        <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                        <span class="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
+                      </span>
+                      <span class="font-mono text-[11px] font-medium text-emerald-400">
+                        {{ node.rtt_ms || 0 }} ms
+                      </span>
+                    </div>
+                    <div
+                      v-else
+                      class="inline-flex items-center space-x-1 text-rose-400 text-xs"
+                    >
+                      <span class="w-1.5 h-1.5 rounded-full bg-rose-500"></span>
+                      <span class="text-[11px] font-medium">离线</span>
+                    </div>
                   </div>
+                  <p v-if="node.core_error" :title="node.core_error" class="text-[10px] text-amber-300 max-w-44 truncate mt-0.5">{{ node.core_error }}</p>
+                  <p v-if="node.last_error" :title="node.last_error" class="text-[10px] text-rose-300 max-w-44 truncate mt-0.5">{{ node.last_error }}</p>
                 </div>
               </td>
 
@@ -152,41 +179,7 @@
                 </div>
               </td>
 
-              <!-- 4. Status & Latency -->
-              <td class="px-5 py-3.5 whitespace-nowrap">
-                <div class="flex items-center space-x-2">
-                  <span
-                    v-if="node.status === 'disabled'"
-                    class="inline-flex items-center space-x-1.5 text-slate-400 text-xs"
-                  >
-                    <span class="w-2 h-2 rounded-full bg-slate-600"></span>
-                    <span class="text-[11px]">已停用</span>
-                  </span>
-                  <div
-                    v-else-if="node.status === 'online'"
-                    class="inline-flex items-center space-x-2"
-                  >
-                    <span class="relative flex h-2.5 w-2.5">
-                      <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
-                      <span class="relative inline-flex rounded-full h-2.5 w-2.5 bg-emerald-500"></span>
-                    </span>
-                    <span class="font-mono text-xs font-medium text-emerald-400">
-                      {{ node.rtt_ms || 0 }} ms
-                    </span>
-                  </div>
-                  <div
-                    v-else
-                    class="inline-flex items-center space-x-1.5 text-rose-400 text-xs"
-                  >
-                    <span class="w-2 h-2 rounded-full bg-rose-500"></span>
-                    <span class="text-[11px] font-medium">离线</span>
-                  </div>
-                </div>
-                <p v-if="node.core_error" :title="node.core_error" class="text-[11px] text-amber-300 max-w-44 truncate mt-0.5">{{ node.core_error }}</p>
-                <p v-if="node.last_error" :title="node.last_error" class="text-[11px] text-rose-300 max-w-44 truncate mt-0.5">{{ node.last_error }}</p>
-              </td>
-
-              <!-- 5. CPU -->
+              <!-- 4. CPU -->
               <td class="px-5 py-3.5">
                 <div class="space-y-1 w-24">
                   <div class="flex justify-between text-xs">
