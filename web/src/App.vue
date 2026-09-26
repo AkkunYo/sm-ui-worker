@@ -60,17 +60,38 @@
         </router-link>
 
         <router-link
+          v-if="currentUser?.role === 'admin'"
+          to="/users"
+          class="flex items-center space-x-3 px-3.5 py-2.5 rounded-lg text-sm font-medium transition"
+          :class="$route.path === '/users' ? 'bg-violet-500/10 text-violet-400 border border-violet-500/20' : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/60'"
+        >
+          <UsersIcon class="w-4 h-4" />
+          <span>租户管理 (Tenants)</span>
+        </router-link>
+
+        <router-link
           to="/settings"
           class="flex items-center space-x-3 px-3.5 py-2.5 rounded-lg text-sm font-medium transition"
           :class="$route.path === '/settings' ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20' : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/60'"
         >
           <SettingsIcon class="w-4 h-4" />
-          <span>管理员设置 (Account)</span>
+          <span>账号设置 (Account)</span>
         </router-link>
       </nav>
 
-      <div class="p-4 border-t border-slate-800">
-        <p class="px-3.5 pb-2 text-xs text-slate-500 font-mono" data-testid="app-version">SM-UI {{ appVersion ? `v${appVersion}` : '—' }}</p>
+      <div class="p-4 border-t border-slate-800 space-y-3">
+        <div v-if="currentUser" class="flex items-center justify-between px-2 py-1.5 rounded-xl bg-slate-950/60 border border-slate-800/80">
+          <div class="flex items-center space-x-2 truncate">
+            <span class="w-6 h-6 rounded-lg bg-emerald-500/20 text-emerald-400 font-bold text-xs flex items-center justify-center uppercase shrink-0">
+              {{ currentUser.username ? currentUser.username[0] : 'U' }}
+            </span>
+            <span class="text-xs font-semibold text-slate-200 truncate">{{ currentUser.username }}</span>
+          </div>
+          <span class="text-[10px] px-1.5 py-0.5 rounded font-mono font-medium shrink-0" :class="currentUser.role === 'admin' ? 'bg-amber-500/10 text-amber-400 border border-amber-500/20' : 'bg-blue-500/10 text-blue-400 border border-blue-500/20'">
+            {{ currentUser.role === 'admin' ? '超管' : '租户' }}
+          </span>
+        </div>
+        <p class="px-3.5 text-xs text-slate-500 font-mono" data-testid="app-version">SM-UI {{ appVersion ? `v${appVersion}` : '—' }}</p>
         <button
           @click="logout"
           class="w-full flex items-center space-x-3 px-3.5 py-2 rounded-lg text-sm text-rose-400 hover:bg-rose-500/10 transition"
@@ -95,12 +116,26 @@
 <script setup>
 import { computed } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { LayoutDashboard, Server, Link2, Sliders, Settings as SettingsIcon, LogOut } from 'lucide-vue-next'
-import { removeToken } from './api'
+import { LayoutDashboard, Server, Link2, Sliders, Users as UsersIcon, Settings as SettingsIcon, LogOut } from 'lucide-vue-next'
+import { removeToken, getUser } from './api'
 import { initializing, initializationError, retryInitialization, appVersion } from './router'
 import PageSkeleton from './components/PageSkeleton.vue'
 
-const mobileNav = [{ path: '/', label: '概览', icon: LayoutDashboard }, { path: '/nodes', label: '节点', icon: Server }, { path: '/subscription', label: '订阅', icon: Link2 }, { path: '/inbounds', label: '协议', icon: Sliders }, { path: '/settings', label: '账号', icon: SettingsIcon }]
+const currentUser = computed(() => getUser())
+
+const mobileNav = computed(() => {
+  const items = [
+    { path: '/', label: '概览', icon: LayoutDashboard },
+    { path: '/nodes', label: '节点', icon: Server },
+    { path: '/subscription', label: '订阅', icon: Link2 },
+    { path: '/inbounds', label: '协议', icon: Sliders }
+  ]
+  if (currentUser.value?.role === 'admin') {
+    items.push({ path: '/users', label: '租户', icon: UsersIcon })
+  }
+  items.push({ path: '/settings', label: '账号', icon: SettingsIcon })
+  return items
+})
 const route = useRoute()
 const router = useRouter()
 

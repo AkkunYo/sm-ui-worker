@@ -1,4 +1,4 @@
--- Cloudflare D1 Database Schema for SM-UI Worker
+-- Cloudflare D1 Database Schema for SM-UI Worker (Multi-Tenant Edition)
 
 CREATE TABLE IF NOT EXISTS system_settings (
   key TEXT PRIMARY KEY,
@@ -10,8 +10,10 @@ CREATE TABLE IF NOT EXISTS system_settings (
 CREATE TABLE IF NOT EXISTS users (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   username TEXT UNIQUE NOT NULL,
+  password_hash TEXT NOT NULL,
+  role TEXT NOT NULL DEFAULT 'user', -- 'admin' | 'user'
   uuid TEXT UNIQUE NOT NULL,
-  password TEXT NOT NULL,
+  proxy_password TEXT NOT NULL,
   sub_token TEXT UNIQUE NOT NULL,
   status INTEGER DEFAULT 1,
   traffic_limit_bytes INTEGER DEFAULT 0,
@@ -24,7 +26,8 @@ CREATE TABLE IF NOT EXISTS users (
 
 CREATE TABLE IF NOT EXISTS nodes (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
-  name TEXT UNIQUE NOT NULL,
+  owner_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  name TEXT NOT NULL,
   server_ip TEXT NOT NULL DEFAULT '',
   proxy_port INTEGER DEFAULT 443,
   protocol TEXT DEFAULT 'all',
@@ -38,11 +41,13 @@ CREATE TABLE IF NOT EXISTS nodes (
   core_version TEXT DEFAULT 'v1.11.4',
   config_version INTEGER DEFAULT 1,
   created_at TEXT DEFAULT (datetime('now')),
-  updated_at TEXT DEFAULT (datetime('now'))
+  updated_at TEXT DEFAULT (datetime('now')),
+  UNIQUE(owner_id, name)
 );
 
 CREATE TABLE IF NOT EXISTS inbound_templates (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
+  owner_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
   reality_dest TEXT DEFAULT 'www.amazon.com:443',
   reality_server_name TEXT DEFAULT 'www.amazon.com',
   reality_private_key TEXT NOT NULL,

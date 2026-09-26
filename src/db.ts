@@ -6,33 +6,11 @@ export interface Env {
 }
 
 export async function ensureInitialDefaults(db: D1Database) {
-  // 1. Ensure JWT Secret exists
+  // Ensure JWT Secret exists
   const jwtSetting = await db.prepare('SELECT value FROM system_settings WHERE key = ?').bind('jwt_secret').first<{ value: string }>();
   if (!jwtSetting) {
     const secret = generateToken(32);
     await db.prepare('INSERT INTO system_settings (key, value) VALUES (?, ?)').bind('jwt_secret', secret).run();
-  }
-
-  // 2. Ensure InboundTemplate exists
-  const templateCount = await db.prepare('SELECT COUNT(*) as count FROM inbound_templates').first<{ count: number }>();
-  if (!templateCount || templateCount.count === 0) {
-    const keys = generateRealityKeyPair();
-    const shortId = generateToken(16);
-    await db.prepare(`
-      INSERT INTO inbound_templates (
-        reality_dest, reality_server_name, reality_private_key, reality_public_key, reality_short_id,
-        hy2_up_mbps, hy2_down_mbps, hy2_masquerade
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-    `).bind(
-      'www.amazon.com:443',
-      'www.amazon.com',
-      keys.privateKey,
-      keys.publicKey,
-      shortId,
-      100,
-      100,
-      'https://bing.com'
-    ).run();
   }
 }
 
@@ -48,5 +26,7 @@ export async function getJwtSecret(db: D1Database): Promise<string> {
 
 export async function isSetupCompleted(db: D1Database): Promise<boolean> {
   const row = await db.prepare('SELECT value FROM system_settings WHERE key = ?').bind('setup_completed').first<{ value: string }>();
-  return row?.value === 'true';
+  if (row?.value !== 'true') return false;
+  const adminCount = await db.prepare("SELECT COUNT(*) as count FROM users WHERE role = 'admin'").first<{ count: number }>();
+  return (adminCount?.count || 0) > 0;
 }

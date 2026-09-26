@@ -57,7 +57,7 @@ export function buildSubscription(
           type: 'hysteria2',
           server: targetIP,
           port: node.proxy_port,
-          password: user.password,
+          password: user.proxy_password || user.password || '',
           sni: template.reality_server_name,
           'skip-cert-verify': true,
           up: `${template.hy2_up_mbps || 100} Mbps`,
@@ -146,7 +146,7 @@ export function buildSubscription(
           tag,
           server: targetIP,
           server_port: node.proxy_port,
-          password: user.password,
+          password: user.proxy_password || user.password || '',
           tls: {
             enabled: true,
             server_name: template.reality_server_name,
@@ -200,7 +200,8 @@ export function buildSubscription(
     // Hysteria 2 URI
     if (proto === 'all' || proto === 'hysteria2') {
       const remark = encodeURIComponent(`${node.name}-Hy2-${targetIP}`);
-      const hy2URI = `hysteria2://${encodeURIComponent(user.password)}@${targetIP}:${node.proxy_port}?sni=${encodeURIComponent(template.reality_server_name)}&insecure=1&alpn=h3#${remark}`;
+      const hy2Password = user.proxy_password || user.password || '';
+      const hy2URI = `hysteria2://${encodeURIComponent(hy2Password)}@${targetIP}:${node.proxy_port}?sni=${encodeURIComponent(template.reality_server_name)}&insecure=1&alpn=h3#${remark}`;
       uris.push(hy2URI);
     }
   }

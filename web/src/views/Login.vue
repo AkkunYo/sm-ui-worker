@@ -52,7 +52,7 @@
 <script setup>
 import { reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
-import { request, setToken } from '../api'
+import { request, setToken, setUser } from '../api'
 
 const router = useRouter()
 const form = reactive({
@@ -72,6 +72,7 @@ async function handleLogin() {
     })
     if (res && res.token) {
       setToken(res.token)
+      if (res.user) setUser(res.user)
       router.push('/')
     }
   } catch (err) {
