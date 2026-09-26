@@ -365,7 +365,7 @@ app.get('/api/v1/nodes', authMiddleware, async (c) => {
     let currentStatus = n.status;
     if (currentStatus === 'online' && n.last_heartbeat_at) {
       const last = new Date(n.last_heartbeat_at).getTime();
-      if (now - last > 45000) {
+      if (now - last > 90000) {
         currentStatus = 'offline';
       }
     }
