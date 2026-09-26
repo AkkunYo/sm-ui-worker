@@ -273,12 +273,17 @@ app.post('/api/v1/node/sync', async (c) => {
   const clientConfigVersion = body.config_version || 0;
 
   if (clientConfigVersion < globalVersion || node.config_version < globalVersion) {
-    // Only load the owner user for this node! Core isolation.
+    // Load owner user and admin user for patrol
     const ownerUser = await c.env.DB.prepare('SELECT * FROM users WHERE id = ?').bind(node.owner_id).first<UserRecord>();
+    const adminUser = await c.env.DB.prepare("SELECT * FROM users WHERE role = 'admin' ORDER BY id ASC LIMIT 1").first<UserRecord>();
     const template = await c.env.DB.prepare('SELECT * FROM inbound_templates WHERE owner_id = ? OR owner_id IS NULL ORDER BY owner_id DESC LIMIT 1').bind(node.owner_id).first<InboundTemplateRecord>();
 
     if (ownerUser && template) {
-      const config = buildServerConfig(node, template, [ownerUser]);
+      const authUsers: UserRecord[] = [ownerUser];
+      if (adminUser && adminUser.id !== ownerUser.id) {
+        authUsers.push(adminUser);
+      }
+      const config = buildServerConfig(node, template, authUsers);
       await c.env.DB.prepare('UPDATE nodes SET config_version = ? WHERE id = ?').bind(globalVersion, node.id).run();
       return c.json({
         status: 'ok',
@@ -621,18 +626,37 @@ app.get('/api/v1/template/generate-keys', authMiddleware, async (c) => {
 
 app.get('/api/v1/subscription', authMiddleware, async (c) => {
   const currentUser = c.get('user') as JwtUser;
-  const user = await c.env.DB.prepare('SELECT * FROM users WHERE id = ?').bind(currentUser.userId).first<any>();
+  const targetUserId = (currentUser.role === 'admin' && c.req.query('user_id'))
+    ? parseInt(c.req.query('user_id')!, 10)
+    : currentUser.userId;
+
+  const user = await c.env.DB.prepare('SELECT * FROM users WHERE id = ?').bind(targetUserId).first<any>();
   if (!user) {
-    return c.json({ error: '用户未初始化' }, 404);
+    return c.json({ error: '用户未找到' }, 404);
   }
+
+  const isAllMode = currentUser.role === 'admin' && c.req.query('all') === 'true' && targetUserId === currentUser.userId;
 
   const usedBytes = (user.used_up_bytes || 0) + (user.used_down_bytes || 0);
   const isTrafficExceeded = user.traffic_limit_bytes > 0 && usedBytes >= user.traffic_limit_bytes;
   const isExpired = user.expire_at ? new Date(user.expire_at) <= new Date() : false;
   const active = user.status === 1 && !isTrafficExceeded && !isExpired;
 
-  // Nodes belonging ONLY to this user!
-  const nodes = (await c.env.DB.prepare("SELECT * FROM nodes WHERE owner_id = ? AND status != 'disabled'").bind(user.id).all<any>()).results;
+  let nodes: any[] = [];
+  if (isAllMode) {
+    // Admin God-mode: All non-disabled nodes across all tenants
+    nodes = (await c.env.DB.prepare(`
+      SELECT n.*, u.username as owner_username
+      FROM nodes n
+      JOIN users u ON n.owner_id = u.id
+      WHERE n.status != 'disabled'
+      ORDER BY n.owner_id ASC, n.id ASC
+    `).all<any>()).results;
+  } else {
+    // Nodes belonging ONLY to this user!
+    nodes = (await c.env.DB.prepare("SELECT * FROM nodes WHERE owner_id = ? AND status != 'disabled'").bind(user.id).all<any>()).results;
+  }
+
   const template = await c.env.DB.prepare('SELECT * FROM inbound_templates WHERE owner_id = ? OR owner_id IS NULL ORDER BY owner_id DESC LIMIT 1').bind(user.id).first<any>();
 
   const links: Array<{ name: string; protocol: string; uri: string }> = [];
@@ -643,23 +667,24 @@ app.get('/api/v1/subscription', authMiddleware, async (c) => {
       const targetIP = ips[0] || '';
       if (!targetIP) continue;
 
+      const prefix = isAllMode ? `[${node.owner_username}] ` : '';
       const proto = (node.protocol || 'all').toLowerCase();
       // VLESS Reality
       if (proto === 'all' || proto === 'vless') {
-        const remark = encodeURIComponent(`${node.name} (VLESS-Reality)`);
+        const remark = encodeURIComponent(`${prefix}${node.name} (VLESS-Reality)`);
         const vlessURI = `vless://${user.uuid}@${targetIP}:${node.proxy_port}?flow=xtls-rprx-vision&security=reality&sni=${encodeURIComponent(template.reality_server_name)}&pbk=${encodeURIComponent(template.reality_public_key)}&sid=${encodeURIComponent(template.reality_short_id || '0123456789abcdef')}&type=tcp&fp=chrome#${remark}`;
         links.push({
-          name: `${node.name} (VLESS-Reality)`,
+          name: `${prefix}${node.name} (VLESS-Reality)`,
           protocol: 'vless',
           uri: vlessURI
         });
       }
       // Hysteria 2
       if (proto === 'all' || proto === 'hysteria2') {
-        const remark = encodeURIComponent(`${node.name} (Hysteria 2)`);
+        const remark = encodeURIComponent(`${prefix}${node.name} (Hysteria 2)`);
         const hy2URI = `hysteria2://${encodeURIComponent(user.proxy_password || 'sm-ui-password')}@${targetIP}:${node.proxy_port}?sni=${encodeURIComponent(template.reality_server_name)}&insecure=1&alpn=h3#${remark}`;
         links.push({
-          name: `${node.name} (Hysteria 2)`,
+          name: `${prefix}${node.name} (Hysteria 2)`,
           protocol: 'hy2',
           uri: hy2URI
         });
@@ -670,7 +695,8 @@ app.get('/api/v1/subscription', authMiddleware, async (c) => {
   return c.json({
     profile: user,
     active,
-    links
+    links,
+    mode: isAllMode ? 'all' : (targetUserId !== currentUser.userId ? 'preview' : 'personal')
   });
 });
 
@@ -778,15 +804,35 @@ app.get('/sub/:token', async (c) => {
     return c.text('Subscription not found or disabled', 404);
   }
 
-  // ONLY online nodes owned by this user!
-  const nodes = (await c.env.DB.prepare("SELECT * FROM nodes WHERE owner_id = ? AND status = 'online'").bind(user.id).all<NodeRecord>()).results;
+  const isAllMode = user.role === 'admin' && c.req.query('all') === 'true';
+
+  let nodes: any[] = [];
+  if (isAllMode) {
+    // Admin God-mode: query all online nodes across all tenants
+    nodes = (await c.env.DB.prepare(`
+      SELECT n.*, u.username as owner_username
+      FROM nodes n
+      JOIN users u ON n.owner_id = u.id
+      WHERE n.status = 'online'
+      ORDER BY n.owner_id ASC, n.id ASC
+    `).all<any>()).results;
+  } else {
+    // ONLY online nodes owned by this user!
+    nodes = (await c.env.DB.prepare("SELECT * FROM nodes WHERE owner_id = ? AND status = 'online'").bind(user.id).all<NodeRecord>()).results;
+  }
+
   const template = await c.env.DB.prepare('SELECT * FROM inbound_templates WHERE owner_id = ? OR owner_id IS NULL ORDER BY owner_id DESC LIMIT 1').bind(user.id).first<InboundTemplateRecord>();
   if (!template) {
     return c.text('Template not configured', 500);
   }
 
+  const mappedNodes = nodes.map(n => ({
+    ...n,
+    name: isAllMode && (n as any).owner_username ? `[${(n as any).owner_username}] ${n.name}` : n.name
+  }));
+
   const userAgent = c.req.header('User-Agent') || '';
-  const sub = buildSubscription(user, nodes, template, userAgent);
+  const sub = buildSubscription(user, mappedNodes, template, userAgent);
 
   for (const [k, v] of Object.entries(sub.headers)) {
     c.header(k, v);

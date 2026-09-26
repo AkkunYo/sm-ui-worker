@@ -12,6 +12,70 @@
       <button type="button" :disabled="loading" @click="load()" class="ml-3 underline disabled:opacity-50">重试</button>
     </div>
     <p v-if="notice" role="status" class="rounded-xl bg-violet-500/10 text-violet-200 p-3">{{ notice }}</p>
+
+    <!-- Admin Subscription Control Bar (Option B & C) -->
+    <div v-if="isAdmin" class="bg-slate-900 border border-slate-800 rounded-2xl p-4 sm:p-5 space-y-4 shadow-xl">
+      <div class="flex flex-wrap items-center justify-between gap-3">
+        <div class="flex items-center space-x-2 text-sm font-semibold text-white">
+          <Sparkles class="w-4 h-4 text-violet-400" />
+          <span>超级管理员视角控制</span>
+        </div>
+        <span class="text-xs text-slate-400">支持全集群聚合测速巡检，以及免登代客预览与分发</span>
+      </div>
+
+      <div class="flex flex-wrap items-center gap-3">
+        <!-- Mode Switch Segments -->
+        <div class="inline-flex p-1 rounded-xl bg-slate-950 border border-slate-800 text-xs">
+          <button
+            type="button"
+            @click="setAdminMode('all')"
+            class="px-3.5 py-1.5 rounded-lg font-medium transition"
+            :class="adminMode === 'all' ? 'bg-violet-500/20 text-violet-300 border border-violet-500/30' : 'text-slate-400 hover:text-white'"
+          >
+            ⚡️ 全网节点聚合 (God-mode)
+          </button>
+          <button
+            type="button"
+            @click="setAdminMode('admin')"
+            class="px-3.5 py-1.5 rounded-lg font-medium transition"
+            :class="adminMode === 'admin' ? 'bg-slate-800 text-white' : 'text-slate-400 hover:text-white'"
+          >
+            👤 超管自用节点
+          </button>
+          <button
+            type="button"
+            @click="setAdminMode('tenant')"
+            class="px-3.5 py-1.5 rounded-lg font-medium transition"
+            :class="adminMode === 'tenant' ? 'bg-amber-500/20 text-amber-300 border border-amber-500/30' : 'text-slate-400 hover:text-white'"
+          >
+            👥 租户专属预览
+          </button>
+        </div>
+
+        <!-- Tenant Selector for Preview Mode -->
+        <div v-if="adminMode === 'tenant'" class="flex items-center space-x-2">
+          <select
+            v-model="selectedTenantId"
+            @change="onTenantSelected"
+            class="px-3 py-1.5 rounded-xl bg-slate-950 border border-slate-700 text-xs text-white focus:outline-none"
+          >
+            <option disabled value="">选择要预览的租户…</option>
+            <option v-for="t in tenantsList" :key="t.id" :value="t.id">
+              {{ t.username }} ({{ t.node_count || 0 }} 台主机)
+            </option>
+          </select>
+        </div>
+      </div>
+
+      <!-- Active Mode Description -->
+      <div v-if="adminMode === 'all'" class="px-3.5 py-2.5 rounded-xl bg-violet-500/10 border border-violet-500/20 text-xs text-violet-300 leading-relaxed flex items-center justify-between">
+        <span>⚡️ <strong>全网节点聚合巡检模式</strong>：当前订阅已聚合全集群所有租户的在线节点（共 {{ links.length }} 个配置），由超管凭据鉴权，可直接导入客户端测速巡检。</span>
+      </div>
+      <div v-else-if="adminMode === 'tenant' && selectedTenantId" class="px-3.5 py-2.5 rounded-xl bg-amber-500/10 border border-amber-500/20 text-xs text-amber-300 leading-relaxed flex items-center justify-between">
+        <span>👀 <strong>代客预览模式</strong>：当前正在代客预览租户 <strong>[{{ profile?.username }}]</strong> 的专属订阅内容。复制链接或二维码即可直接发给该租户使用。</span>
+      </div>
+    </div>
+
     <PageSkeleton v-if="!profile && !error" label="正在加载订阅…" :rows="4" />
     <template v-if="profile">
       <!-- Empty Hosts Warning Banner -->
@@ -112,12 +176,19 @@
 
 <script setup>
 import { ref, computed, onMounted, onUnmounted } from 'vue'
-import { Link2, List, AppWindow, Copy, QrCode, Download, RefreshCw, X, Server } from 'lucide-vue-next'
+import { Link2, List, AppWindow, Copy, QrCode, Download, RefreshCw, X, Server, Sparkles } from 'lucide-vue-next'
 import QRCode from 'qrcode'
-import { request, formatBytes } from '../api'
+import { request, formatBytes, getUser } from '../api'
 import PageSkeleton from '../components/PageSkeleton.vue'
 import { usePageRead } from '../composables/usePageRead'
 const readPage = usePageRead()
+
+const currentUser = computed(() => getUser())
+const isAdmin = computed(() => currentUser.value?.role === 'admin')
+const adminMode = ref('all') // 'all', 'admin', 'tenant'
+const selectedTenantId = ref('')
+const tenantsList = ref([])
+
 const profile = ref(null), links = ref([]), active = ref(false), loading = ref(false), error = ref(''), notice = ref('')
 const tab = ref('links'), platform = ref(/iphone|ipad|macintosh/i.test(navigator.userAgent) ? 'ios' : /android/i.test(navigator.userAgent) ? 'android' : 'desktop')
 const qr = ref(null), mainQR = ref(''), settingsOpen = ref(false), settingsError = ref(''), saving = ref(false), form = ref({})
@@ -128,12 +199,23 @@ const used = computed(() => (profile.value?.used_up_bytes || 0) + (profile.value
 const percent = computed(() => Math.min(100, used.value / (profile.value?.traffic_limit_bytes || Infinity) * 100))
 const daysLeft = computed(() => profile.value?.expire_at ? Math.max(0, Math.ceil((new Date(profile.value.expire_at) - Date.now()) / 86400000)) : '∞')
 const statusText = computed(() => !profile.value?.status ? '已停用' : profile.value.expire_at && new Date(profile.value.expire_at) <= new Date() ? '已到期' : !active.value ? '流量已耗尽' : '正常')
-const subURL = computed(() => profile.value ? `${window.location.origin}/sub/${encodeURIComponent(profile.value.sub_token)}` : '')
-const formats = computed(() => [
-  { id: 'base64', badge: 'SUB', label: '通用订阅', url: `${subURL.value}?format=base64`, ext: 'txt', color: 'bg-emerald-500/10 border-emerald-500/20 text-emerald-300' },
-  { id: 'singbox', badge: 'JSON', label: 'Sing-box', url: `${subURL.value}?format=singbox`, ext: 'json', color: 'bg-violet-500/10 border-violet-500/20 text-violet-300' },
-  { id: 'clash', badge: 'CLASH', label: 'Clash / Mihomo', url: `${subURL.value}?format=clash`, ext: 'yaml', color: 'bg-amber-500/10 border-amber-500/20 text-amber-300' }
-])
+const subURL = computed(() => {
+  if (!profile.value) return ''
+  const base = `${window.location.origin}/sub/${encodeURIComponent(profile.value.sub_token)}`
+  if (isAdmin.value && adminMode.value === 'all') {
+    return `${base}?all=true`
+  }
+  return base
+})
+const formats = computed(() => {
+  const isAll = isAdmin.value && adminMode.value === 'all'
+  const joinChar = subURL.value.includes('?') ? '&' : '?'
+  return [
+    { id: 'base64', badge: 'SUB', label: isAll ? '全网通用订阅' : '通用订阅', url: `${subURL.value}${joinChar}format=base64`, ext: 'txt', color: 'bg-emerald-500/10 border-emerald-500/20 text-emerald-300' },
+    { id: 'singbox', badge: 'JSON', label: isAll ? '全网 Sing-box' : 'Sing-box', url: `${subURL.value}${joinChar}format=singbox`, ext: 'json', color: 'bg-violet-500/10 border-violet-500/20 text-violet-300' },
+    { id: 'clash', badge: 'CLASH', label: isAll ? '全网 Clash / Mihomo' : 'Clash / Mihomo', url: `${subURL.value}${joinChar}format=clash`, ext: 'yaml', color: 'bg-amber-500/10 border-amber-500/20 text-amber-300' }
+  ]
+})
 const apps = computed(() => {
   const raw = formats.value[0].url, enc = encodeURIComponent(raw), json = encodeURIComponent(formats.value[1].url)
   const common = [{ name: 'V2Box', url: `v2box://install-sub?url=${enc}&name=SM-UI` }, { name: 'Happ', url: `happ://add/${raw}` }]
@@ -153,15 +235,47 @@ async function showQR(value, label) {
   try { qr.value = { value, label, image: await QRCode.toDataURL(value, { width: 480, margin: 3, errorCorrectionLevel: 'M' }) } }
   catch { error.value = '链接过长，无法生成二维码，请复制链接导入。' }
 }
+
+async function loadTenants() {
+  if (!isAdmin.value) return
+  try {
+    const list = await request('/api/v1/users')
+    if (Array.isArray(list)) {
+      tenantsList.value = list
+    }
+  } catch (e) {}
+}
+
+function setAdminMode(mode) {
+  adminMode.value = mode
+  if (mode === 'tenant' && !selectedTenantId.value && tenantsList.value.length > 0) {
+    const firstTenant = tenantsList.value.find(t => t.id !== currentUser.value?.id) || tenantsList.value[0]
+    selectedTenantId.value = firstTenant?.id || ''
+  }
+  load()
+}
+
+function onTenantSelected() {
+  load()
+}
+
 async function load() {
   if (loading.value) return
   loading.value = true
   try {
-    const data = await readPage('/api/v1/subscription')
+    let url = '/api/v1/subscription'
+    if (isAdmin.value) {
+      if (adminMode.value === 'all') {
+        url = '/api/v1/subscription?all=true'
+      } else if (adminMode.value === 'tenant' && selectedTenantId.value) {
+        url = `/api/v1/subscription?user_id=${selectedTenantId.value}`
+      }
+    }
+    const data = await readPage(url)
     if (!data?.profile) throw new Error('未找到订阅配置')
-    const changed = profile.value?.sub_token !== data.profile.sub_token
+    const changed = profile.value?.sub_token !== data.profile.sub_token || links.value.length !== (data.links || []).length
     profile.value = data.profile; active.value = data.active; links.value = data.links || []; error.value = ''
-    if (changed) mainQR.value = await QRCode.toDataURL(formats.value[0].url, { width: 224, margin: 2 })
+    if (changed || !mainQR.value) mainQR.value = await QRCode.toDataURL(formats.value[0].url, { width: 224, margin: 2 })
   } catch (e) { if (e.name !== 'AbortError') error.value = e.message || '加载订阅失败' }
   finally { loading.value = false }
 }
@@ -189,7 +303,11 @@ async function resetSubscription() {
   try { await request('/api/v1/subscription', { method: 'PUT', body: JSON.stringify({ reset_subscription: true }) }); settingsOpen.value = false; await load(); toast('订阅地址已重置') }
   catch (e) { settingsError.value = e.message } finally { saving.value = false }
 }
-onMounted(() => { load(); timer = setInterval(load, 10000) })
+onMounted(() => {
+  load()
+  loadTenants()
+  timer = setInterval(load, 10000)
+})
 onUnmounted(() => { clearInterval(timer); clearTimeout(noticeTimer) })
 </script>
 
