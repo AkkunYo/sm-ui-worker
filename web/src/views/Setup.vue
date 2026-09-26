@@ -90,7 +90,7 @@
 <script setup>
 import { reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
-import { request, setToken } from '../api'
+import { request, setToken, setUser } from '../api'
 import { setSystemInitialized } from '../router'
 
 const router = useRouter()
@@ -128,6 +128,7 @@ async function handleSubmit() {
     if (res && res.token) {
       setSystemInitialized(true)
       setToken(res.token)
+      if (res.user) setUser(res.user)
       window.location.hash = '#/'
     }
   } catch (err) {

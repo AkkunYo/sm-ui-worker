@@ -6,7 +6,13 @@ import { generateRealityKeyPair, generateToken, generateUUID } from './keys';
 import { buildServerConfig, type NodeRecord, type InboundTemplateRecord, type UserRecord } from './protocol';
 import { buildSubscription } from './subscription';
 
-const app = new Hono<{ Bindings: Env }>();
+interface JwtUser {
+  userId: number;
+  username: string;
+  role: 'admin' | 'user';
+}
+
+const app = new Hono<{ Bindings: Env; Variables: { user: JwtUser } }>();
 
 app.use('*', cors());
 
@@ -31,7 +37,7 @@ async function hashPassword(password: string): Promise<string> {
 }
 
 async function verifyPassword(password: string, storedHash: string): Promise<boolean> {
-  if (!storedHash.includes(':')) {
+  if (!storedHash || !storedHash.includes(':')) {
     return password === storedHash;
   }
   const [saltHex, hashHex] = storedHash.split(':');
@@ -72,11 +78,19 @@ const authMiddleware = async (c: any, next: any) => {
   const secret = await getJwtSecret(c.env.DB);
   try {
     const payload = await verify(token, secret, "HS256");
-    c.set('jwtPayload', payload);
+    c.set('user', payload as JwtUser);
     await next();
   } catch (e) {
     return c.json({ error: 'Invalid or expired token' }, 401);
   }
+};
+
+const adminOnly = async (c: any, next: any) => {
+  const user = c.get('user') as JwtUser;
+  if (user?.role !== 'admin') {
+    return c.json({ error: 'Forbidden: 管理员专属操作' }, 403);
+  }
+  await next();
 };
 
 // ==========================================
@@ -85,7 +99,7 @@ const authMiddleware = async (c: any, next: any) => {
 
 app.get('/api/v1/system/setup/status', async (c) => {
   const initialized = await isSetupCompleted(c.env.DB);
-  return c.json({ is_initialized: initialized });
+  return c.json({ is_initialized: initialized, version: '1.1.0' });
 });
 
 app.post('/api/v1/system/setup', async (c) => {
@@ -94,7 +108,7 @@ app.post('/api/v1/system/setup', async (c) => {
   }
 
   const body = await c.req.json();
-  const username = (body.username || '').trim();
+  const username = (body.username || 'admin').trim();
   const password = body.password || '';
   const confirmPassword = body.confirm_password || '';
 
@@ -105,25 +119,36 @@ app.post('/api/v1/system/setup', async (c) => {
   const hashed = await hashPassword(password);
   const subToken = generateToken(32);
   const uuid = generateUUID();
+  const proxyPassword = generateToken(16);
 
-  // Create or update admin user (ID: 1)
-  const existingUser = await c.env.DB.prepare('SELECT id FROM users WHERE id = 1').first();
-  if (existingUser) {
-    await c.env.DB.prepare('UPDATE users SET username = ?, password = ? WHERE id = 1').bind(username, hashed).run();
-  } else {
-    await c.env.DB.prepare('INSERT INTO users (id, username, uuid, password, sub_token, status) VALUES (1, ?, ?, ?, ?, 1)').bind(username, uuid, hashed, subToken).run();
-  }
+  // Create superadmin user (ID: 1, role: 'admin')
+  const res = await c.env.DB.prepare(`
+    INSERT INTO users (username, password_hash, role, uuid, proxy_password, sub_token, status)
+    VALUES (?, ?, 'admin', ?, ?, ?, 1)
+  `).bind(username, hashed, uuid, proxyPassword, subToken).run();
+
+  const adminId = res.meta.last_row_id || 1;
+
+  // Create default global inbound template
+  const keys = generateRealityKeyPair();
+  const shortId = generateToken(16);
+  await c.env.DB.prepare(`
+    INSERT INTO inbound_templates (
+      owner_id, reality_dest, reality_server_name, reality_private_key, reality_public_key, reality_short_id,
+      hy2_up_mbps, hy2_down_mbps, hy2_masquerade
+    ) VALUES (NULL, 'www.amazon.com:443', 'www.amazon.com', ?, ?, ?, 100, 100, 'https://bing.com')
+  `).bind(keys.privateKey, keys.publicKey, shortId).run();
 
   // Mark setup completed
   await c.env.DB.prepare("INSERT OR REPLACE INTO system_settings (key, value) VALUES ('setup_completed', 'true')").run();
 
   const secret = await getJwtSecret(c.env.DB);
-  const token = await sign({ username, exp: Math.floor(Date.now() / 1000) + 86400 * 7 }, secret, "HS256");
+  const token = await sign({ userId: adminId, username, role: 'admin', exp: Math.floor(Date.now() / 1000) + 86400 * 7 }, secret, "HS256");
 
   return c.json({
     success: true,
     token,
-    user: { username }
+    user: { id: adminId, username, role: 'admin' }
   });
 });
 
@@ -133,52 +158,52 @@ app.post('/api/v1/auth/login', async (c) => {
   const password = body.password || '';
 
   const user = await c.env.DB.prepare('SELECT * FROM users WHERE username = ?').bind(username).first<any>();
-  if (!user) {
-    return c.json({ error: 'invalid username or password' }, 401);
+  if (!user || user.status !== 1) {
+    return c.json({ error: '用户名或密码错误' }, 401);
   }
 
-  const valid = await verifyPassword(password, user.password);
+  const valid = await verifyPassword(password, user.password_hash);
   if (!valid) {
-    return c.json({ error: 'invalid username or password' }, 401);
+    return c.json({ error: '用户名或密码错误' }, 401);
   }
 
   const secret = await getJwtSecret(c.env.DB);
-  const token = await sign({ username, exp: Math.floor(Date.now() / 1000) + 86400 * 7 }, secret, "HS256");
+  const token = await sign({ userId: user.id, username: user.username, role: user.role, exp: Math.floor(Date.now() / 1000) + 86400 * 7 }, secret, "HS256");
 
   return c.json({
     token,
-    user: { id: user.id, username: user.username }
+    user: { id: user.id, username: user.username, role: user.role }
   });
 });
 
 app.get('/api/v1/system/profile', authMiddleware, async (c) => {
-  const user = await c.env.DB.prepare('SELECT username FROM users WHERE id = 1').first<any>();
-  return c.json({ username: user?.username || 'admin' });
+  const currentUser = c.get('user') as JwtUser;
+  const user = await c.env.DB.prepare('SELECT id, username, role, sub_token, traffic_limit_bytes, used_up_bytes, used_down_bytes, expire_at FROM users WHERE id = ?').bind(currentUser.userId).first<any>();
+  return c.json(user || { username: currentUser.username, role: currentUser.role });
 });
 
 app.post('/api/v1/system/profile', authMiddleware, async (c) => {
+  const currentUser = c.get('user') as JwtUser;
   const body = await c.req.json();
-  const username = (body.username || '').trim();
   const oldPassword = body.old_password || '';
   const newPassword = body.new_password || '';
-  const confirmPassword = body.confirm_password || '';
 
-  const admin = await c.env.DB.prepare('SELECT * FROM users WHERE id = 1').first<any>();
-  if (!admin) return c.json({ error: 'Admin not found' }, 404);
-
-  if (newPassword) {
-    if (newPassword.length < 6) return c.json({ error: '新密码长度不得少于 6 位' }, 400);
-    if (newPassword !== confirmPassword) return c.json({ error: '两次输入的新密码不一致' }, 400);
-    const valid = await verifyPassword(oldPassword, admin.password);
-    if (!valid) return c.json({ error: '原密码验证失败' }, 400);
-
-    const hashed = await hashPassword(newPassword);
-    await c.env.DB.prepare('UPDATE users SET username = ?, password = ? WHERE id = 1').bind(username || admin.username, hashed).run();
-  } else if (username && username !== admin.username) {
-    await c.env.DB.prepare('UPDATE users SET username = ? WHERE id = 1').bind(username).run();
+  if (newPassword.length < 6) {
+    return c.json({ error: '新密码长度不能少于 6 位' }, 400);
   }
 
-  return c.json({ success: true, username: username || admin.username });
+  const user = await c.env.DB.prepare('SELECT * FROM users WHERE id = ?').bind(currentUser.userId).first<any>();
+  if (!user) return c.json({ error: '用户不存在' }, 404);
+
+  const valid = await verifyPassword(oldPassword, user.password_hash);
+  if (!valid) {
+    return c.json({ error: '当前密码验证错误' }, 400);
+  }
+
+  const hashed = await hashPassword(newPassword);
+  await c.env.DB.prepare('UPDATE users SET password_hash = ?, updated_at = datetime("now") WHERE id = ?').bind(hashed, user.id).run();
+
+  return c.json({ success: true, username: user.username });
 });
 
 // ==========================================
@@ -191,7 +216,7 @@ app.post('/api/v1/node/sync', async (c) => {
     return c.json({ error: 'Missing X-Node-Token' }, 401);
   }
 
-  const node = await c.env.DB.prepare('SELECT * FROM nodes WHERE token = ?').bind(token).first<NodeRecord & { config_version: number }>();
+  const node = await c.env.DB.prepare('SELECT * FROM nodes WHERE token = ?').bind(token).first<NodeRecord & { config_version: number; owner_id: number }>();
   if (!node) {
     return c.json({ error: 'Invalid node token' }, 401);
   }
@@ -229,16 +254,16 @@ app.post('/api/v1/node/sync', async (c) => {
     node.id
   ).run();
 
-  // Process traffic reporting deltas
+  // Process traffic reporting deltas: attribute to node owner!
   if (Array.isArray(body.traffic_deltas)) {
     for (const d of body.traffic_deltas) {
-      if (d.username && (d.uplink > 0 || d.downlink > 0)) {
+      if (d.uplink > 0 || d.downlink > 0) {
         await c.env.DB.prepare(`
           UPDATE users SET
             used_up_bytes = used_up_bytes + ?,
             used_down_bytes = used_down_bytes + ?
-          WHERE username = ?
-        `).bind(d.uplink || 0, d.downlink || 0, d.username).run();
+          WHERE id = ?
+        `).bind(d.uplink || 0, d.downlink || 0, node.owner_id).run();
       }
     }
   }
@@ -248,11 +273,12 @@ app.post('/api/v1/node/sync', async (c) => {
   const clientConfigVersion = body.config_version || 0;
 
   if (clientConfigVersion < globalVersion || node.config_version < globalVersion) {
-    const template = await c.env.DB.prepare('SELECT * FROM inbound_templates LIMIT 1').first<InboundTemplateRecord>();
-    const users = (await c.env.DB.prepare('SELECT * FROM users').all<UserRecord>()).results;
+    // Only load the owner user for this node! Core isolation.
+    const ownerUser = await c.env.DB.prepare('SELECT * FROM users WHERE id = ?').bind(node.owner_id).first<UserRecord>();
+    const template = await c.env.DB.prepare('SELECT * FROM inbound_templates WHERE owner_id = ? OR owner_id IS NULL ORDER BY owner_id DESC LIMIT 1').bind(node.owner_id).first<InboundTemplateRecord>();
 
-    if (template) {
-      const config = buildServerConfig(node, template, users);
+    if (ownerUser && template) {
+      const config = buildServerConfig(node, template, [ownerUser]);
       await c.env.DB.prepare('UPDATE nodes SET config_version = ? WHERE id = ?').bind(globalVersion, node.id).run();
       return c.json({
         status: 'ok',
@@ -275,10 +301,39 @@ app.post('/api/v1/node/sync', async (c) => {
 // ==========================================
 
 app.get('/api/v1/nodes', authMiddleware, async (c) => {
-  const nodes = (await c.env.DB.prepare('SELECT * FROM nodes ORDER BY id ASC').all<any>()).results;
+  const currentUser = c.get('user') as JwtUser;
   const now = Date.now();
 
-  // Dynamically evaluate stale nodes (heartbeat > 45s => offline)
+  let nodes: any[] = [];
+  if (currentUser.role === 'admin') {
+    const ownerFilter = c.req.query('owner_id');
+    if (ownerFilter) {
+      nodes = (await c.env.DB.prepare(`
+        SELECT n.*, u.username as owner_username
+        FROM nodes n
+        JOIN users u ON n.owner_id = u.id
+        WHERE n.owner_id = ?
+        ORDER BY n.id ASC
+      `).bind(parseInt(ownerFilter, 10)).all<any>()).results;
+    } else {
+      nodes = (await c.env.DB.prepare(`
+        SELECT n.*, u.username as owner_username
+        FROM nodes n
+        JOIN users u ON n.owner_id = u.id
+        ORDER BY n.id ASC
+      `).all<any>()).results;
+    }
+  } else {
+    // Tenant only sees their own nodes
+    nodes = (await c.env.DB.prepare(`
+      SELECT n.*, u.username as owner_username
+      FROM nodes n
+      JOIN users u ON n.owner_id = u.id
+      WHERE n.owner_id = ?
+      ORDER BY n.id ASC
+    `).bind(currentUser.userId).all<any>()).results;
+  }
+
   const evaluated = nodes.map(n => {
     let currentStatus = n.status;
     if (currentStatus === 'online' && n.last_heartbeat_at) {
@@ -300,12 +355,18 @@ app.get('/api/v1/nodes', authMiddleware, async (c) => {
 });
 
 app.post('/api/v1/nodes', authMiddleware, async (c) => {
+  const currentUser = c.get('user') as JwtUser;
   const body = await c.req.json();
   const name = (body.name || '').trim();
   if (!name) return c.json({ error: '主机备注名称不能为空' }, 400);
 
-  const existing = await c.env.DB.prepare('SELECT id FROM nodes WHERE name = ?').bind(name).first();
-  if (existing) return c.json({ error: '主机备注名称已存在，不得重复' }, 400);
+  let ownerId = currentUser.userId;
+  if (currentUser.role === 'admin' && body.owner_id) {
+    ownerId = parseInt(body.owner_id, 10);
+  }
+
+  const existing = await c.env.DB.prepare('SELECT id FROM nodes WHERE owner_id = ? AND name = ?').bind(ownerId, name).first();
+  if (existing) return c.json({ error: '该租户名下主机名称已存在，不得重复' }, 400);
 
   const token = generateUUID();
   const proxyPort = parseInt(body.proxy_port, 10) || 443;
@@ -313,9 +374,9 @@ app.post('/api/v1/nodes', authMiddleware, async (c) => {
   const serverIp = (body.server_ip || '').trim();
 
   const res = await c.env.DB.prepare(`
-    INSERT INTO nodes (name, server_ip, proxy_port, protocol, token, status)
-    VALUES (?, ?, ?, ?, ?, 'offline')
-  `).bind(name, serverIp, proxyPort, protocol, token).run();
+    INSERT INTO nodes (owner_id, name, server_ip, proxy_port, protocol, token, status)
+    VALUES (?, ?, ?, ?, ?, ?, 'offline')
+  `).bind(ownerId, name, serverIp, proxyPort, protocol, token).run();
 
   await bumpConfigVersion(c.env.DB);
 
@@ -325,6 +386,7 @@ app.post('/api/v1/nodes', authMiddleware, async (c) => {
 
   return c.json({
     id: res.meta.last_row_id,
+    owner_id: ownerId,
     name,
     server_ip: serverIp,
     proxy_port: proxyPort,
@@ -336,83 +398,144 @@ app.post('/api/v1/nodes', authMiddleware, async (c) => {
 });
 
 app.put('/api/v1/nodes/:id', authMiddleware, async (c) => {
+  const currentUser = c.get('user') as JwtUser;
   const id = parseInt(c.req.param('id'), 10);
   const body = await c.req.json();
 
-  const node = await c.env.DB.prepare('SELECT * FROM nodes WHERE id = ?').bind(id).first<any>();
-  if (!node) return c.json({ error: 'Node not found' }, 404);
+  let node: any = null;
+  if (currentUser.role === 'admin') {
+    node = await c.env.DB.prepare('SELECT * FROM nodes WHERE id = ?').bind(id).first<any>();
+  } else {
+    node = await c.env.DB.prepare('SELECT * FROM nodes WHERE id = ? AND owner_id = ?').bind(id, currentUser.userId).first<any>();
+  }
+  if (!node) return c.json({ error: '主机不存在或无权限编辑' }, 404);
 
   const name = body.name ? body.name.trim() : node.name;
   const serverIp = body.server_ip !== undefined ? body.server_ip.trim() : node.server_ip;
   const proxyPort = body.proxy_port ? parseInt(body.proxy_port, 10) : node.proxy_port;
   const protocol = body.protocol ? body.protocol.toLowerCase() : node.protocol;
   const status = body.status ? body.status.toLowerCase() : node.status;
+  const ownerId = (currentUser.role === 'admin' && body.owner_id) ? parseInt(body.owner_id, 10) : node.owner_id;
 
   await c.env.DB.prepare(`
-    UPDATE nodes SET name = ?, server_ip = ?, proxy_port = ?, protocol = ?, status = ? WHERE id = ?
-  `).bind(name, serverIp, proxyPort, protocol, status, id).run();
+    UPDATE nodes SET owner_id = ?, name = ?, server_ip = ?, proxy_port = ?, protocol = ?, status = ? WHERE id = ?
+  `).bind(ownerId, name, serverIp, proxyPort, protocol, status, id).run();
 
   await bumpConfigVersion(c.env.DB);
-
   return c.json({ success: true });
 });
 
 app.delete('/api/v1/nodes/:id', authMiddleware, async (c) => {
+  const currentUser = c.get('user') as JwtUser;
   const id = parseInt(c.req.param('id'), 10);
-  await c.env.DB.prepare('DELETE FROM nodes WHERE id = ?').bind(id).run();
+
+  if (currentUser.role === 'admin') {
+    await c.env.DB.prepare('DELETE FROM nodes WHERE id = ?').bind(id).run();
+  } else {
+    await c.env.DB.prepare('DELETE FROM nodes WHERE id = ? AND owner_id = ?').bind(id, currentUser.userId).run();
+  }
   await bumpConfigVersion(c.env.DB);
   return c.json({ success: true });
 });
 
 // ==========================================
-// 4. User Management (Web API)
+// 4. Tenant User Management (Admin Only)
 // ==========================================
 
-app.get('/api/v1/users', authMiddleware, async (c) => {
-  const users = (await c.env.DB.prepare('SELECT * FROM users ORDER BY id ASC').all<any>()).results;
+app.get('/api/v1/users', authMiddleware, adminOnly, async (c) => {
+  const users = (await c.env.DB.prepare(`
+    SELECT u.id, u.username, u.role, u.status, u.traffic_limit_bytes,
+           u.used_up_bytes, u.used_down_bytes, u.expire_at, u.sub_token,
+           u.created_at,
+           COUNT(n.id) as node_count
+    FROM users u
+    LEFT JOIN nodes n ON n.owner_id = u.id
+    GROUP BY u.id
+    ORDER BY u.id ASC
+  `).all<any>()).results;
   return c.json(users);
 });
 
-app.post('/api/v1/users', authMiddleware, async (c) => {
+app.post('/api/v1/users', authMiddleware, adminOnly, async (c) => {
   const body = await c.req.json();
   const username = (body.username || '').trim();
+  const password = body.password || '';
+  const role = body.role === 'admin' ? 'admin' : 'user';
+  const trafficLimit = parseInt(body.traffic_limit_bytes, 10) || 0;
+  const expireAt = body.expire_at || null;
+
   if (!username) return c.json({ error: '用户名不能为空' }, 400);
+  if (password.length < 6) return c.json({ error: '密码长度不能少于 6 位' }, 400);
 
   const existing = await c.env.DB.prepare('SELECT id FROM users WHERE username = ?').bind(username).first();
   if (existing) return c.json({ error: '用户名已存在' }, 400);
 
-  const uuid = generateUUID();
-  const password = generateToken(16);
+  const hashed = await hashPassword(password);
   const subToken = generateToken(32);
-  const limitGb = parseInt(body.limit_gb, 10) || 0;
-  const limitBytes = limitGb * 1024 * 1024 * 1024;
-
-  let expireAt: string | null = null;
-  if (body.expire_days && parseInt(body.expire_days, 10) > 0) {
-    const d = new Date();
-    d.setDate(d.getDate() + parseInt(body.expire_days, 10));
-    expireAt = d.toISOString();
-  }
+  const uuid = generateUUID();
+  const proxyPassword = generateToken(16);
 
   const res = await c.env.DB.prepare(`
-    INSERT INTO users (username, uuid, password, sub_token, traffic_limit_bytes, expire_at, status)
-    VALUES (?, ?, ?, ?, ?, ?, 1)
-  `).bind(username, uuid, password, subToken, limitBytes, expireAt).run();
+    INSERT INTO users (username, password_hash, role, uuid, proxy_password, sub_token, status, traffic_limit_bytes, expire_at)
+    VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?)
+  `).bind(username, hashed, role, uuid, proxyPassword, subToken, trafficLimit, expireAt).run();
 
-  await bumpConfigVersion(c.env.DB);
+  const userId = res.meta.last_row_id;
 
   return c.json({
-    id: res.meta.last_row_id,
+    id: userId,
     username,
+    role,
     uuid,
-    sub_token: subToken
+    sub_token: subToken,
+    traffic_limit_bytes: trafficLimit,
+    status: 1
   }, 201);
 });
 
-app.delete('/api/v1/users/:id', authMiddleware, async (c) => {
+app.put('/api/v1/users/:id', authMiddleware, adminOnly, async (c) => {
   const id = parseInt(c.req.param('id'), 10);
-  if (id === 1) {
-    return c.json({ error: '系统默认初始管理员 (ID: 1) 不可删除' }, 400);
+  const body = await c.req.json();
+
+  const user = await c.env.DB.prepare('SELECT * FROM users WHERE id = ?').bind(id).first<any>();
+  if (!user) return c.json({ error: '用户不存在' }, 404);
+
+  let passwordHash = user.password_hash;
+  if (body.password && body.password.length >= 6) {
+    passwordHash = await hashPassword(body.password);
+  }
+
+  let subToken = user.sub_token;
+  if (body.reset_subscription) {
+    subToken = generateToken(32);
+  }
+
+  const status = body.status !== undefined ? (body.status ? 1 : 0) : user.status;
+  const trafficLimit = body.traffic_limit_bytes !== undefined ? parseInt(body.traffic_limit_bytes, 10) : user.traffic_limit_bytes;
+  const expireAt = body.clear_expiry ? null : (body.expire_at !== undefined ? body.expire_at : user.expire_at);
+  const role = body.role ? (body.role === 'admin' ? 'admin' : 'user') : user.role;
+
+  await c.env.DB.prepare(`
+    UPDATE users SET
+      password_hash = ?,
+      sub_token = ?,
+      status = ?,
+      traffic_limit_bytes = ?,
+      expire_at = ?,
+      role = ?,
+      updated_at = datetime('now')
+    WHERE id = ?
+  `).bind(passwordHash, subToken, status, trafficLimit, expireAt, role, id).run();
+
+  await bumpConfigVersion(c.env.DB);
+  return c.json({ success: true });
+});
+
+app.delete('/api/v1/users/:id', authMiddleware, adminOnly, async (c) => {
+  const id = parseInt(c.req.param('id'), 10);
+  const currentUser = c.get('user') as JwtUser;
+  if (id === 1 || id === currentUser.userId) {
+    return c.json({ error: '系统初始管理员或自身账号不可删除' }, 400);
   }
   await c.env.DB.prepare('DELETE FROM users WHERE id = ?').bind(id).run();
   await bumpConfigVersion(c.env.DB);
@@ -424,33 +547,59 @@ app.delete('/api/v1/users/:id', authMiddleware, async (c) => {
 // ==========================================
 
 app.get('/api/v1/template', authMiddleware, async (c) => {
-  const template = await c.env.DB.prepare('SELECT * FROM inbound_templates LIMIT 1').first<any>();
+  const currentUser = c.get('user') as JwtUser;
+  const template = await c.env.DB.prepare('SELECT * FROM inbound_templates WHERE owner_id = ? OR owner_id IS NULL ORDER BY owner_id DESC LIMIT 1').bind(currentUser.userId).first<any>();
   return c.json(template);
 });
 
 app.put('/api/v1/template', authMiddleware, async (c) => {
+  const currentUser = c.get('user') as JwtUser;
   const body = await c.req.json();
-  await c.env.DB.prepare(`
-    UPDATE inbound_templates SET
-      reality_dest = ?,
-      reality_server_name = ?,
-      reality_private_key = ?,
-      reality_public_key = ?,
-      reality_short_id = ?,
-      hy2_up_mbps = ?,
-      hy2_down_mbps = ?,
-      hy2_masquerade = ?
-    WHERE id = 1
-  `).bind(
-    body.reality_dest,
-    body.reality_server_name,
-    body.reality_private_key,
-    body.reality_public_key,
-    body.reality_short_id,
-    body.hy2_up_mbps || 100,
-    body.hy2_down_mbps || 100,
-    body.hy2_masquerade || 'https://bing.com'
-  ).run();
+
+  const existing = await c.env.DB.prepare('SELECT id FROM inbound_templates WHERE owner_id = ?').bind(currentUser.userId).first<any>();
+
+  if (existing) {
+    await c.env.DB.prepare(`
+      UPDATE inbound_templates SET
+        reality_dest = ?,
+        reality_server_name = ?,
+        reality_private_key = ?,
+        reality_public_key = ?,
+        reality_short_id = ?,
+        hy2_up_mbps = ?,
+        hy2_down_mbps = ?,
+        hy2_masquerade = ?,
+        updated_at = datetime('now')
+      WHERE id = ?
+    `).bind(
+      body.reality_dest,
+      body.reality_server_name,
+      body.reality_private_key,
+      body.reality_public_key,
+      body.reality_short_id,
+      body.hy2_up_mbps || 100,
+      body.hy2_down_mbps || 100,
+      body.hy2_masquerade || 'https://bing.com',
+      existing.id
+    ).run();
+  } else {
+    await c.env.DB.prepare(`
+      INSERT INTO inbound_templates (
+        owner_id, reality_dest, reality_server_name, reality_private_key, reality_public_key, reality_short_id,
+        hy2_up_mbps, hy2_down_mbps, hy2_masquerade
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).bind(
+      currentUser.userId,
+      body.reality_dest,
+      body.reality_server_name,
+      body.reality_private_key,
+      body.reality_public_key,
+      body.reality_short_id,
+      body.hy2_up_mbps || 100,
+      body.hy2_down_mbps || 100,
+      body.hy2_masquerade || 'https://bing.com'
+    ).run();
+  }
 
   await bumpConfigVersion(c.env.DB);
   return c.json({ success: true });
@@ -471,14 +620,8 @@ app.get('/api/v1/template/generate-keys', authMiddleware, async (c) => {
 // ==========================================
 
 app.get('/api/v1/subscription', authMiddleware, async (c) => {
-  const payload = c.get('jwtPayload');
-  let user = null;
-  if (payload?.username) {
-    user = await c.env.DB.prepare('SELECT * FROM users WHERE username = ?').bind(payload.username).first<any>();
-  }
-  if (!user) {
-    user = await c.env.DB.prepare('SELECT * FROM users ORDER BY id ASC LIMIT 1').first<any>();
-  }
+  const currentUser = c.get('user') as JwtUser;
+  const user = await c.env.DB.prepare('SELECT * FROM users WHERE id = ?').bind(currentUser.userId).first<any>();
   if (!user) {
     return c.json({ error: '用户未初始化' }, 404);
   }
@@ -488,8 +631,9 @@ app.get('/api/v1/subscription', authMiddleware, async (c) => {
   const isExpired = user.expire_at ? new Date(user.expire_at) <= new Date() : false;
   const active = user.status === 1 && !isTrafficExceeded && !isExpired;
 
-  const nodes = (await c.env.DB.prepare("SELECT * FROM nodes WHERE status != 'disabled'").all<any>()).results;
-  const template = await c.env.DB.prepare('SELECT * FROM inbound_templates LIMIT 1').first<any>();
+  // Nodes belonging ONLY to this user!
+  const nodes = (await c.env.DB.prepare("SELECT * FROM nodes WHERE owner_id = ? AND status != 'disabled'").bind(user.id).all<any>()).results;
+  const template = await c.env.DB.prepare('SELECT * FROM inbound_templates WHERE owner_id = ? OR owner_id IS NULL ORDER BY owner_id DESC LIMIT 1').bind(user.id).first<any>();
 
   const links: Array<{ name: string; protocol: string; uri: string }> = [];
   if (template && nodes.length > 0) {
@@ -513,7 +657,7 @@ app.get('/api/v1/subscription', authMiddleware, async (c) => {
       // Hysteria 2
       if (proto === 'all' || proto === 'hysteria2') {
         const remark = encodeURIComponent(`${node.name} (Hysteria 2)`);
-        const hy2URI = `hysteria2://${encodeURIComponent(user.password)}@${targetIP}:${node.proxy_port}?sni=${encodeURIComponent(template.reality_server_name)}&insecure=1&alpn=h3#${remark}`;
+        const hy2URI = `hysteria2://${encodeURIComponent(user.proxy_password || 'sm-ui-password')}@${targetIP}:${node.proxy_port}?sni=${encodeURIComponent(template.reality_server_name)}&insecure=1&alpn=h3#${remark}`;
         links.push({
           name: `${node.name} (Hysteria 2)`,
           protocol: 'hy2',
@@ -531,103 +675,89 @@ app.get('/api/v1/subscription', authMiddleware, async (c) => {
 });
 
 app.put('/api/v1/subscription', authMiddleware, async (c) => {
-  const payload = c.get('jwtPayload');
-  let user = null;
-  if (payload?.username) {
-    user = await c.env.DB.prepare('SELECT * FROM users WHERE username = ?').bind(payload.username).first<any>();
-  }
-  if (!user) {
-    user = await c.env.DB.prepare('SELECT * FROM users ORDER BY id ASC LIMIT 1').first<any>();
-  }
+  const currentUser = c.get('user') as JwtUser;
+  const user = await c.env.DB.prepare('SELECT * FROM users WHERE id = ?').bind(currentUser.userId).first<any>();
   if (!user) return c.json({ error: 'User not found' }, 404);
 
   const body = await c.req.json();
   if (body.reset_subscription) {
-    const newToken = generateToken(16);
+    const newToken = generateToken(32);
     await c.env.DB.prepare('UPDATE users SET sub_token = ? WHERE id = ?').bind(newToken, user.id).run();
     await bumpConfigVersion(c.env.DB);
     return c.json({ success: true, sub_token: newToken });
   }
 
-  let newPassword = user.password;
+  let proxyPassword = user.proxy_password;
   if (body.password) {
-    newPassword = body.password;
+    proxyPassword = body.password;
   }
-
-  let expireAt = user.expire_at;
-  if (body.clear_expiry) {
-    expireAt = null;
-  } else if (body.expire_at) {
-    expireAt = body.expire_at;
-  }
-
-  const status = body.status !== undefined ? (body.status ? 1 : 0) : user.status;
-  const trafficLimit = body.traffic_limit_bytes !== undefined ? body.traffic_limit_bytes : user.traffic_limit_bytes;
 
   await c.env.DB.prepare(`
-    UPDATE users SET
-      status = ?,
-      traffic_limit_bytes = ?,
-      expire_at = ?,
-      password = ?,
-      updated_at = datetime('now')
-    WHERE id = ?
-  `).bind(status, trafficLimit, expireAt, newPassword, user.id).run();
+    UPDATE users SET proxy_password = ?, updated_at = datetime('now') WHERE id = ?
+  `).bind(proxyPassword, user.id).run();
 
   await bumpConfigVersion(c.env.DB);
   return c.json({ success: true });
 });
 
 app.get('/api/v1/traffic', authMiddleware, async (c) => {
-  const users = (await c.env.DB.prepare('SELECT id, username, used_up_bytes, used_down_bytes FROM users').all<any>()).results;
-  const nodes = (await c.env.DB.prepare('SELECT id, name FROM nodes').all<any>()).results;
+  const currentUser = c.get('user') as JwtUser;
 
-  let totalUplink = 0;
-  let totalDownlink = 0;
-  const userItems = users.map(u => {
-    const up = u.used_up_bytes || 0;
-    const down = u.used_down_bytes || 0;
-    totalUplink += up;
-    totalDownlink += down;
-    return {
-      id: u.id,
-      name: u.username,
-      uplink: up,
-      downlink: down
-    };
-  });
+  if (currentUser.role === 'admin') {
+    const users = (await c.env.DB.prepare('SELECT id, username, used_up_bytes, used_down_bytes FROM users').all<any>()).results;
+    const nodes = (await c.env.DB.prepare('SELECT id, name FROM nodes').all<any>()).results;
 
-  const hostItems = nodes.map(n => ({
-    id: n.id,
-    name: n.name,
-    uplink: nodes.length > 0 ? Math.floor(totalUplink / nodes.length) : 0,
-    downlink: nodes.length > 0 ? Math.floor(totalDownlink / nodes.length) : 0
-  }));
+    let totalUplink = 0;
+    let totalDownlink = 0;
+    const userItems = users.map(u => {
+      const up = u.used_up_bytes || 0;
+      const down = u.used_down_bytes || 0;
+      totalUplink += up;
+      totalDownlink += down;
+      return { id: u.id, name: u.username, uplink: up, downlink: down };
+    });
 
-  const protoItems = [
-    {
-      id: 'vless',
-      name: 'VLESS-Reality',
-      uplink: Math.floor(totalUplink * 0.6),
-      downlink: Math.floor(totalDownlink * 0.6)
-    },
-    {
-      id: 'hy2',
-      name: 'Hysteria 2',
-      uplink: Math.floor(totalUplink * 0.4),
-      downlink: Math.floor(totalDownlink * 0.4)
-    }
-  ];
+    const hostItems = nodes.map(n => ({
+      id: n.id,
+      name: n.name,
+      uplink: nodes.length > 0 ? Math.floor(totalUplink / nodes.length) : 0,
+      downlink: nodes.length > 0 ? Math.floor(totalDownlink / nodes.length) : 0
+    }));
 
-  return c.json({
-    total: {
-      uplink: totalUplink,
-      downlink: totalDownlink
-    },
-    hosts: hostItems,
-    protocols: protoItems,
-    users: userItems
-  });
+    return c.json({
+      total: { uplink: totalUplink, downlink: totalDownlink },
+      hosts: hostItems,
+      protocols: [
+        { id: 'vless', name: 'VLESS-Reality', uplink: Math.floor(totalUplink * 0.6), downlink: Math.floor(totalDownlink * 0.6) },
+        { id: 'hy2', name: 'Hysteria 2', uplink: Math.floor(totalUplink * 0.4), downlink: Math.floor(totalDownlink * 0.4) }
+      ],
+      users: userItems
+    });
+  } else {
+    // Tenant only sees their own traffic
+    const user = await c.env.DB.prepare('SELECT id, username, used_up_bytes, used_down_bytes FROM users WHERE id = ?').bind(currentUser.userId).first<any>();
+    const nodes = (await c.env.DB.prepare('SELECT id, name FROM nodes WHERE owner_id = ?').bind(currentUser.userId).all<any>()).results;
+
+    const up = user?.used_up_bytes || 0;
+    const down = user?.used_down_bytes || 0;
+
+    const hostItems = nodes.map(n => ({
+      id: n.id,
+      name: n.name,
+      uplink: nodes.length > 0 ? Math.floor(up / nodes.length) : 0,
+      downlink: nodes.length > 0 ? Math.floor(down / nodes.length) : 0
+    }));
+
+    return c.json({
+      total: { uplink: up, downlink: down },
+      hosts: hostItems,
+      protocols: [
+        { id: 'vless', name: 'VLESS-Reality', uplink: Math.floor(up * 0.6), downlink: Math.floor(down * 0.6) },
+        { id: 'hy2', name: 'Hysteria 2', uplink: Math.floor(up * 0.4), downlink: Math.floor(down * 0.4) }
+      ],
+      users: [{ id: currentUser.userId, name: currentUser.username, uplink: up, downlink: down }]
+    });
+  }
 });
 
 app.get('/api/v1/events', async (c) => {
@@ -640,6 +770,7 @@ app.get('/api/v1/events', async (c) => {
   });
 });
 
+// Universal Client Subscription endpoint
 app.get('/sub/:token', async (c) => {
   const token = c.req.param('token');
   const user = await c.env.DB.prepare('SELECT * FROM users WHERE sub_token = ?').bind(token).first<any>();
@@ -647,8 +778,9 @@ app.get('/sub/:token', async (c) => {
     return c.text('Subscription not found or disabled', 404);
   }
 
-  const nodes = (await c.env.DB.prepare("SELECT * FROM nodes WHERE status = 'online'").all<NodeRecord>()).results;
-  const template = await c.env.DB.prepare('SELECT * FROM inbound_templates LIMIT 1').first<InboundTemplateRecord>();
+  // ONLY online nodes owned by this user!
+  const nodes = (await c.env.DB.prepare("SELECT * FROM nodes WHERE owner_id = ? AND status = 'online'").bind(user.id).all<NodeRecord>()).results;
+  const template = await c.env.DB.prepare('SELECT * FROM inbound_templates WHERE owner_id = ? OR owner_id IS NULL ORDER BY owner_id DESC LIMIT 1').bind(user.id).first<InboundTemplateRecord>();
   if (!template) {
     return c.text('Template not configured', 500);
   }

@@ -1,11 +1,12 @@
 import { createRouter, createWebHashHistory } from 'vue-router'
 import { ref } from 'vue'
-import { getToken, request } from '../api'
+import { getToken, getUser, request } from '../api'
 
 import Dashboard from '../views/Dashboard.vue'
 import Inbounds from '../views/Inbounds.vue'
 import Nodes from '../views/Nodes.vue'
 import Subscription from '../views/Subscription.vue'
+import Users from '../views/Users.vue'
 import Settings from '../views/Settings.vue'
 import Login from '../views/Login.vue'
 import Setup from '../views/Setup.vue'
@@ -17,7 +18,7 @@ const routes = [
   { path: '/inbounds', component: Inbounds },
   { path: '/nodes', component: Nodes },
   { path: '/subscription', component: Subscription },
-  { path: '/users', redirect: '/subscription' },
+  { path: '/users', component: Users, meta: { requiresAdmin: true } },
   { path: '/settings', component: Settings },
   { path: '/:pathMatch(.*)*', redirect: '/' }
 ]
@@ -95,6 +96,8 @@ router.beforeEach(async (to, from, next) => {
   if (!to.meta.public && !token) {
     next('/login')
   } else if (to.path === '/login' && token) {
+    next('/')
+  } else if (to.meta.requiresAdmin && getUser()?.role !== 'admin') {
     next('/')
   } else {
     next()

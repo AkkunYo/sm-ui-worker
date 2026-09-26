@@ -1,5 +1,6 @@
 export interface NodeRecord {
   id: number;
+  owner_id: number;
   name: string;
   server_ip: string;
   proxy_port: number;
@@ -9,6 +10,8 @@ export interface NodeRecord {
 }
 
 export interface InboundTemplateRecord {
+  id: number;
+  owner_id?: number | null;
   reality_dest: string;
   reality_server_name: string;
   reality_private_key: string;
@@ -22,8 +25,11 @@ export interface InboundTemplateRecord {
 export interface UserRecord {
   id: number;
   username: string;
+  role: string;
   uuid: string;
-  password: string;
+  proxy_password?: string;
+  password?: string;
+  sub_token: string;
   status: number;
 }
 
@@ -43,7 +49,7 @@ export function buildServerConfig(
   }));
 
   const hy2Users = activeUsers.map(u => ({
-    password: u.password,
+    password: u.proxy_password || u.password || 'sm-ui-password',
     name: u.username
   }));
 
@@ -92,23 +98,32 @@ export function buildServerConfig(
       listen: '::',
       listen_port: node.proxy_port,
       users: hy2Users,
+      up_mbps: template.hy2_up_mbps || 100,
+      down_mbps: template.hy2_down_mbps || 100,
+      ignore_client_bandwidth: false,
       masquerade: template.hy2_masquerade || 'https://bing.com',
       tls: {
         enabled: true,
-        certificate_path: `${baseDir}/certs/hy2.crt`,
-        key_path: `${baseDir}/certs/hy2.key`
+        certificate_path: `${baseDir}/certs/selfsigned.crt`,
+        key_path: `${baseDir}/certs/selfsigned.key`
       }
     });
   }
 
   return {
     log: {
-      level: 'warn',
+      disabled: false,
+      level: 'info',
       timestamp: true
     },
     experimental: {
-      clash_api: {
-        external_controller: '127.0.0.1:9090'
+      v2ray_api: {
+        listen: '127.0.0.1:8080',
+        stats: {
+          enabled: true,
+          inbounds: ['vless-in', 'hy2-in'],
+          users: activeUserNames
+        }
       }
     },
     inbounds,
@@ -116,7 +131,19 @@ export function buildServerConfig(
       {
         type: 'direct',
         tag: 'direct'
+      },
+      {
+        type: 'block',
+        tag: 'block'
       }
-    ]
+    ],
+    route: {
+      rules: [
+        {
+          inbound: ['vless-in', 'hy2-in'],
+          outbound: 'direct'
+        }
+      ]
+    }
   };
 }

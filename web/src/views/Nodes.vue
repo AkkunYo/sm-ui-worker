@@ -19,6 +19,19 @@
       <button type="button" :disabled="loading" @click="loadNodes" class="ml-3 underline disabled:opacity-50">重试</button>
     </div>
     <PageSkeleton v-if="!loaded && !loadError" label="正在加载主机列表…" />
+    <!-- Tenant Filter (Admin Only) -->
+    <div v-if="isAdmin && tenantList.length > 0" class="flex flex-wrap items-center justify-between gap-3 bg-slate-900/80 border border-slate-800 p-3.5 rounded-xl">
+      <div class="flex items-center space-x-2 text-xs text-slate-300">
+        <Users class="w-4 h-4 text-violet-400" />
+        <span class="font-medium">筛选租户主机:</span>
+        <select v-model="selectedTenantFilter" @change="loadNodes" class="px-3 py-1.5 rounded-lg bg-slate-950 border border-slate-700 text-xs text-slate-100 focus:outline-none">
+          <option value="">全部租户主机 ({{ nodes.length }}台)</option>
+          <option v-for="t in tenantList" :key="t.id" :value="t.id">{{ t.username }} ({{ t.node_count || 0 }}台)</option>
+        </select>
+      </div>
+      <span class="text-xs text-slate-500">已启用多租户强隔离模式</span>
+    </div>
+
     <!-- Nodes Table -->
     <div v-if="loaded" class="bg-slate-900 border border-slate-800 rounded-2xl overflow-hidden shadow-xl">
       <div class="overflow-x-auto">
@@ -26,6 +39,7 @@
           <thead class="bg-slate-950/60 text-xs uppercase text-slate-400 border-b border-slate-800">
             <tr>
               <th class="px-5 py-3.5 font-semibold w-28">操作</th>
+              <th v-if="isAdmin" class="px-5 py-3.5 font-semibold">所属租户</th>
               <th class="px-5 py-3.5 font-semibold">名称</th>
               <th class="px-5 py-3.5 font-semibold">
                 <div class="flex items-center space-x-1.5">
@@ -49,7 +63,7 @@
           </thead>
           <tbody class="divide-y divide-slate-800">
             <tr v-if="nodes.length === 0">
-              <td colspan="7" class="px-6 py-12 text-center text-slate-500">
+              <td :colspan="isAdmin ? 8 : 7" class="px-6 py-12 text-center text-slate-500">
                 暂无接入主机，点击右上角“添加接入主机”生成专属 UUID 与一键纳管指令。
               </td>
             </tr>
@@ -92,6 +106,13 @@
                     <Trash2 class="w-3.5 h-3.5" />
                   </button>
                 </div>
+              </td>
+
+              <!-- Owner Tag (Admin Only) -->
+              <td v-if="isAdmin" class="px-5 py-3.5">
+                <span class="px-2 py-0.5 rounded text-[11px] font-medium bg-violet-500/10 text-violet-300 border border-violet-500/20">
+                  {{ node.owner_username || 'Admin' }}
+                </span>
               </td>
 
               <!-- 2. Name -->
@@ -222,6 +243,19 @@
         </div>
 
         <form @submit.prevent="createNode" class="space-y-4">
+          <div v-if="isAdmin && tenantList.length > 0">
+            <label class="block text-xs font-semibold text-slate-300 uppercase tracking-wider mb-1.5">
+              指定所属租户用户
+            </label>
+            <select
+              v-model="addForm.owner_id"
+              class="w-full px-4 py-2.5 rounded-xl bg-slate-950 border border-slate-800 text-slate-100 text-sm focus:border-emerald-500 focus:outline-none"
+            >
+              <option v-for="t in tenantList" :key="t.id" :value="t.id">{{ t.username }} ({{ t.role === 'admin' ? '超管' : '租户' }})</option>
+            </select>
+            <p class="text-[11px] text-slate-500 mt-1">选中的租户将独占纳管该主机，且仅在该租户的订阅中下发。</p>
+          </div>
+
           <div>
             <label class="block text-xs font-semibold text-slate-300 uppercase tracking-wider mb-1.5">
               主机备注名称 <span class="text-rose-400">* (不得重复)</span>
@@ -544,11 +578,16 @@
 
 <script setup>
 import { ref, reactive, computed, onMounted, onUnmounted } from 'vue'
-import { Plus, Trash2, X, Copy, Terminal, Check, Sliders, Power, Eye, EyeOff, Globe } from 'lucide-vue-next'
-import { request, getToken } from '../api'
+import { Plus, Trash2, X, Copy, Terminal, Check, Sliders, Power, Eye, EyeOff, Globe, Users } from 'lucide-vue-next'
+import { request, getToken, getUser } from '../api'
 import PageSkeleton from '../components/PageSkeleton.vue'
 import { usePageRead } from '../composables/usePageRead'
 const readPage = usePageRead()
+
+const currentUser = computed(() => getUser())
+const isAdmin = computed(() => currentUser.value?.role === 'admin')
+const tenantList = ref([])
+const selectedTenantFilter = ref('')
 
 const nodes = ref([])
 const loaded = ref(false)
@@ -580,6 +619,7 @@ const tabs = [
 ]
 
 const addForm = reactive({
+  owner_id: null,
   name: '',
   server_ip: '',
   proxy_port: 443,
@@ -672,6 +712,7 @@ function openAddModal() {
   addForm.name = ''
   addForm.server_ip = ''
   addForm.proxy_port = 443
+  addForm.owner_id = currentUser.value?.id || null
   showAddModal.value = true
 }
 
@@ -706,10 +747,16 @@ async function loadNodes() {
   loadError.value = ''
   const revision = nodeRevision
   try {
-    const data = await readPage('/api/v1/nodes')
+    const url = selectedTenantFilter.value ? `/api/v1/nodes?owner_id=${selectedTenantFilter.value}` : '/api/v1/nodes'
+    const data = await readPage(url)
     if (!Array.isArray(data)) throw new Error('主机列表响应无效')
     if (nodeRevision === revision) nodes.value = data
     loaded.value = true
+
+    if (isAdmin.value && tenantList.value.length === 0) {
+      const usersData = await request('/api/v1/users').catch(() => [])
+      if (Array.isArray(usersData)) tenantList.value = usersData
+    }
   } catch (err) {
     if (err.name !== 'AbortError' && nodeRevision === revision) loadError.value = err.message || '加载主机列表失败'
   } finally {
@@ -723,20 +770,11 @@ async function createNode() {
       method: 'POST',
       body: JSON.stringify(addForm)
     })
-    if (res && res.node) {
+    const nodeObj = res.node || res
+    if (nodeObj && (nodeObj.token || nodeObj.id)) {
       showAddModal.value = false
-      activeInstructionNode.value = res.node
-      openInstructionModal(res.node)
-      if (res.join_url) {
-        try {
-          const u = new URL(res.join_url)
-          if (u.protocol) joinScheme.value = u.protocol.replace(':', '')
-          if (u.host && !u.host.startsWith('localhost') && !u.host.startsWith('127.0.0.1')) {
-            customMasterHost.value = u.host
-            detectedMasterHost.value = u.host
-          }
-        } catch (e) {}
-      }
+      activeInstructionNode.value = nodeObj
+      openInstructionModal(nodeObj)
       await loadNodes()
     }
   } catch (err) {
