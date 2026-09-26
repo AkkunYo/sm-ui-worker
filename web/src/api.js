@@ -26,8 +26,11 @@ export function getUser() {
 }
 
 export function setUser(user) {
-  if (user) {
-    localStorage.setItem(USER_KEY, JSON.stringify(user))
+  const old = localStorage.getItem(USER_KEY)
+  const next = user ? JSON.stringify(user) : null
+  if (old === next) return
+  if (next) {
+    localStorage.setItem(USER_KEY, next)
   } else {
     localStorage.removeItem(USER_KEY)
   }
