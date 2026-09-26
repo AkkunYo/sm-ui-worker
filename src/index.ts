@@ -841,16 +841,6 @@ app.get('/api/v1/traffic', authMiddleware, async (c) => {
   }
 });
 
-app.get('/api/v1/events', async (c) => {
-  return new Response(': heartbeat\n\n', {
-    headers: {
-      'Content-Type': 'text/event-stream',
-      'Cache-Control': 'no-cache',
-      'Connection': 'keep-alive'
-    }
-  });
-});
-
 // Shared Subscription Handler supporting both /sub/:username/:token and /sub/:token
 async function handleSubscription(c: any, usernameParam?: string, tokenParam?: string) {
   const token = tokenParam || c.req.param('token');

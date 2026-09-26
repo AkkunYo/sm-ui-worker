@@ -168,7 +168,7 @@
 <script setup>
 import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { Server, Link2, ArrowUpRight, ArrowDownRight } from 'lucide-vue-next'
-import { formatBytes, getToken } from '../api'
+import { formatBytes } from '../api'
 import TrafficDistribution from '../components/TrafficDistribution.vue'
 import PageSkeleton from '../components/PageSkeleton.vue'
 import { usePageRead } from '../composables/usePageRead'
@@ -183,7 +183,6 @@ const subscriptionActive = ref(false)
 const traffic = ref(null)
 const trafficError = ref(false)
 const trafficLoading = ref(false)
-let eventSource = null
 let refreshTimer = null
 
 const enabledNodes = computed(() => nodes.value.filter(n => n.status !== 'disabled'))
@@ -237,22 +236,6 @@ function refreshData() {
   loadTraffic()
 }
 
-function setupSSE() {
-  const token = getToken()
-  if (!token) return
-  eventSource = new EventSource(`/api/v1/events?token=${token}`)
-  eventSource.onmessage = (event) => {
-    try {
-      const data = JSON.parse(event.data)
-      if (data && data.nodes) {
-        nodes.value = data.nodes
-      }
-    } catch (e) {
-      console.error('SSE parse error:', e)
-    }
-  }
-}
-
 function handleVisibilityChange() {
   if (document.hidden) {
     if (refreshTimer) {
@@ -269,7 +252,6 @@ function handleVisibilityChange() {
 
 onMounted(() => {
   refreshData()
-  setupSSE()
   refreshTimer = setInterval(refreshData, 30000)
   document.addEventListener('visibilitychange', handleVisibilityChange)
 })
@@ -279,8 +261,5 @@ onUnmounted(() => {
     clearInterval(refreshTimer)
   }
   document.removeEventListener('visibilitychange', handleVisibilityChange)
-  if (eventSource) {
-    eventSource.close()
-  }
 })
 </script>
