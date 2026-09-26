@@ -56,9 +56,9 @@
       </div>
     </div>
 
-    <!-- Active Nodes Quick View -->
-    <div class="bg-slate-900 border border-slate-800 rounded-2xl p-6">
-      <div class="flex items-center justify-between mb-6">
+    <!-- Active Nodes Quick View (Compact Strip List) -->
+    <div class="bg-slate-900 border border-slate-800 rounded-2xl p-5 sm:p-6">
+      <div class="flex items-center justify-between mb-4">
         <div>
           <h2 class="text-base font-semibold text-white">主机列表 <span class="ml-1 text-sm font-normal text-slate-400">Node Hosts</span></h2>
           <p class="text-xs text-slate-400 mt-0.5">自动同步各 VPS 反向长连状态与心跳</p>
@@ -68,51 +68,70 @@
         </router-link>
       </div>
 
-      <div v-if="enabledNodes.length === 0" class="text-center py-12 text-slate-500 text-sm">
+      <div v-if="enabledNodes.length === 0" class="text-center py-8 text-slate-500 text-sm">
         暂无接入主机，请前往“节点主机”添加第一个主机。
       </div>
 
-      <div v-else class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+      <div v-else class="grid grid-cols-1 lg:grid-cols-2 gap-3">
         <div
           v-for="node in enabledNodes"
           :key="node.id"
-          class="p-4 rounded-xl bg-slate-950/60 border border-slate-800/80 flex flex-col justify-between space-y-4"
+          class="flex items-center justify-between px-4 py-3 rounded-xl bg-slate-950/60 border border-slate-800/80 hover:border-slate-700/80 transition-colors gap-3"
         >
-          <div class="flex items-start justify-between">
-            <div>
-              <div class="flex items-center space-x-2">
-                <!-- Pulsing Green Dot / Red Dot -->
-                <span class="relative flex h-2.5 w-2.5">
-                  <span
-                    v-if="node.status === 'online'"
-                    class="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"
-                  ></span>
-                  <span
-                    :class="node.status === 'online' ? 'bg-emerald-500' : 'bg-rose-500'"
-                    class="relative inline-flex rounded-full h-2.5 w-2.5"
-                  ></span>
-                </span>
-                <span class="font-semibold text-white text-sm">{{ node.name }}</span>
-              </div>
-              <p class="text-xs text-slate-400 mt-1">{{ node.server_ip }}:{{ node.proxy_port }}</p>
+          <!-- Left: Status & Name & IP -->
+          <div class="flex items-center gap-3 min-w-0">
+            <span class="relative flex h-2.5 w-2.5 shrink-0">
+              <span
+                v-if="node.status === 'online'"
+                class="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"
+              ></span>
+              <span
+                :class="node.status === 'online' ? 'bg-emerald-500' : 'bg-rose-500'"
+                class="relative inline-flex rounded-full h-2.5 w-2.5"
+              ></span>
+            </span>
+            <div class="min-w-0">
+              <p class="text-sm font-semibold text-white truncate">{{ node.name }}</p>
+              <p class="text-xs font-mono text-slate-400 truncate">{{ node.server_ip }}:{{ node.proxy_port }}</p>
             </div>
+          </div>
+
+          <!-- Right: Stats & Latency -->
+          <div class="flex items-center gap-3 shrink-0">
+            <!-- CPU & Mem mini meters -->
+            <div class="hidden sm:flex items-center gap-3 text-xs text-slate-400">
+              <div class="flex items-center gap-1.5">
+                <span class="text-slate-500">CPU</span>
+                <span class="font-mono text-slate-300 min-w-[28px] text-right">{{ node.cpu_percent ? node.cpu_percent.toFixed(0) : 0 }}%</span>
+                <div class="w-10 h-1.5 bg-slate-800 rounded-full overflow-hidden">
+                  <div
+                    class="h-full rounded-full transition-all"
+                    :class="node.cpu_percent > 80 ? 'bg-rose-500' : node.cpu_percent > 50 ? 'bg-amber-500' : 'bg-emerald-500'"
+                    :style="{ width: `${Math.min(100, Math.max(0, node.cpu_percent || 0))}%` }"
+                  ></div>
+                </div>
+              </div>
+
+              <div class="flex items-center gap-1.5">
+                <span class="text-slate-500">RAM</span>
+                <span class="font-mono text-slate-300 min-w-[28px] text-right">{{ node.memory_percent ? node.memory_percent.toFixed(0) : 0 }}%</span>
+                <div class="w-10 h-1.5 bg-slate-800 rounded-full overflow-hidden">
+                  <div
+                    class="h-full rounded-full transition-all"
+                    :class="node.memory_percent > 80 ? 'bg-rose-500' : node.memory_percent > 50 ? 'bg-amber-500' : 'bg-blue-500'"
+                    :style="{ width: `${Math.min(100, Math.max(0, node.memory_percent || 0))}%` }"
+                  ></div>
+                </div>
+              </div>
+            </div>
+
+            <!-- Latency Pill -->
             <span
-              class="px-2 py-0.5 rounded text-[11px] font-medium"
+              class="px-2 py-0.5 rounded text-xs font-mono font-medium"
               :class="node.status === 'online' ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20' : 'bg-slate-800 text-slate-400'"
             >
               {{ node.status === 'online' ? `${node.rtt_ms || 0} ms` : '离线' }}
             </span>
-          </div>
-
-          <div class="grid grid-cols-2 gap-2 text-xs border-t border-slate-800/60 pt-3">
-            <div>
-              <span class="text-slate-500">CPU 占用</span>
-              <p class="text-slate-200 font-medium mt-0.5">{{ node.cpu_percent ? node.cpu_percent.toFixed(1) : 0 }}%</p>
-            </div>
-            <div>
-              <span class="text-slate-500">内存占用</span>
-              <p class="text-slate-200 font-medium mt-0.5">{{ node.memory_percent ? node.memory_percent.toFixed(1) : 0 }}%</p>
-            </div>
           </div>
         </div>
       </div>
