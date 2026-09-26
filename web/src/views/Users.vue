@@ -83,7 +83,7 @@
               </td>
               <td class="px-5 py-4">
                 <button
-                  @click="copySubUrl(user.sub_token)"
+                  @click="copySubUrl(user)"
                   class="p-1.5 text-slate-400 hover:text-violet-300 hover:bg-violet-500/10 rounded-lg transition flex items-center space-x-1 text-xs"
                   title="复制该租户专属订阅地址"
                 >
@@ -349,10 +349,10 @@ async function deleteUser(user) {
   }
 }
 
-function copySubUrl(subToken) {
-  const url = `${window.location.origin}/sub/${encodeURIComponent(subToken)}`
+function copySubUrl(user) {
+  const url = `${window.location.origin}/sub/${encodeURIComponent(user.username)}/${encodeURIComponent(user.sub_token)}`
   navigator.clipboard.writeText(url).then(() => {
-    alert('专属订阅链接已复制到剪贴板')
+    alert(`租户 ${user.username} 的专属订阅链接已复制到剪贴板`)
   }).catch(() => {
     prompt('请手动复制订阅链接：', url)
   })

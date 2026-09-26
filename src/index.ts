@@ -796,10 +796,18 @@ app.get('/api/v1/events', async (c) => {
   });
 });
 
-// Universal Client Subscription endpoint
-app.get('/sub/:token', async (c) => {
-  const token = c.req.param('token');
-  const user = await c.env.DB.prepare('SELECT * FROM users WHERE sub_token = ?').bind(token).first<any>();
+// Shared Subscription Handler supporting both /sub/:username/:token and /sub/:token
+async function handleSubscription(c: any, usernameParam?: string, tokenParam?: string) {
+  const token = tokenParam || c.req.param('token');
+  const username = usernameParam || c.req.param('username');
+
+  let user: any = null;
+  if (username && token) {
+    user = await c.env.DB.prepare('SELECT * FROM users WHERE username = ? AND sub_token = ?').bind(username, token).first<any>();
+  } else if (token) {
+    user = await c.env.DB.prepare('SELECT * FROM users WHERE sub_token = ?').bind(token).first<any>();
+  }
+
   if (!user || user.status !== 1) {
     return c.text('Subscription not found or disabled', 404);
   }
@@ -838,7 +846,17 @@ app.get('/sub/:token', async (c) => {
     c.header(k, v);
   }
   c.header('Content-Type', sub.contentType);
+  c.header('Content-Disposition', `inline; filename="${encodeURIComponent(user.username)}"`);
   return c.body(sub.body);
+}
+
+// Universal Client Subscription endpoints: with username and backward compatible
+app.get('/sub/:username/:token', async (c) => {
+  return handleSubscription(c, c.req.param('username'), c.req.param('token'));
+});
+
+app.get('/sub/:token', async (c) => {
+  return handleSubscription(c, undefined, c.req.param('token'));
 });
 
 // Fallback to static assets
