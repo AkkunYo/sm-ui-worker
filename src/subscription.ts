@@ -27,6 +27,8 @@ export function buildSubscription(
       const targetIP = ips[0] || '127.0.0.1';
       const proto = (node.protocol || 'all').toLowerCase();
       const suffix = node.owner_username ? ` [${node.owner_username}]` : '';
+      const nodeUuid = node.owner_uuid || user.uuid;
+      const nodePassword = node.owner_proxy_password || user.proxy_password || user.password || '';
 
       // VLESS Reality
       if (proto === 'all' || proto === 'vless') {
@@ -36,7 +38,7 @@ export function buildSubscription(
           type: 'vless',
           server: targetIP,
           port: node.proxy_port,
-          uuid: user.uuid,
+          uuid: nodeUuid,
           network: 'tcp',
           tls: true,
           'reality-opts': {
@@ -65,7 +67,7 @@ export function buildSubscription(
           type: 'hysteria2',
           server: targetIP,
           port: node.proxy_port,
-          password: user.proxy_password || user.password || '',
+          password: nodePassword,
           sni: hy2Sni,
           'skip-cert-verify': true,
           up: `${template.hy2_up_mbps || 100} Mbps`,
@@ -82,7 +84,7 @@ export function buildSubscription(
             server: targetIP,
             port: node.proxy_port,
             ports: node.hop_ports.trim(),
-            password: user.proxy_password || user.password || '',
+            password: nodePassword,
             sni: hy2Sni,
             'skip-cert-verify': true,
             up: `${template.hy2_up_mbps || 100} Mbps`,
@@ -140,6 +142,8 @@ export function buildSubscription(
       const targetIP = ips[0] || '127.0.0.1';
       const proto = (node.protocol || 'all').toLowerCase();
       const suffix = node.owner_username ? ` [${node.owner_username}]` : '';
+      const nodeUuid = node.owner_uuid || user.uuid;
+      const nodePassword = node.owner_proxy_password || user.proxy_password || user.password || '';
 
       // VLESS Reality
       if (proto === 'all' || proto === 'vless') {
@@ -149,7 +153,7 @@ export function buildSubscription(
           tag,
           server: targetIP,
           server_port: node.proxy_port,
-          uuid: user.uuid,
+          uuid: nodeUuid,
           flow: 'xtls-rprx-vision',
           tls: {
             enabled: true,
@@ -173,7 +177,7 @@ export function buildSubscription(
           tag,
           server: targetIP,
           server_port: node.proxy_port,
-          password: user.proxy_password || user.password || '',
+          password: nodePassword,
           tls: {
             enabled: true,
             server_name: template.reality_server_name,
@@ -217,18 +221,19 @@ export function buildSubscription(
     const targetIP = ips[0] || '127.0.0.1';
     const proto = (node.protocol || 'all').toLowerCase();
     const suffix = node.owner_username ? ` [${node.owner_username}]` : '';
+    const nodeUuid = node.owner_uuid || user.uuid;
+    const nodePassword = node.owner_proxy_password || user.proxy_password || user.password || '';
 
     // VLESS Reality URI
     if (proto === 'all' || proto === 'vless') {
       const remark = encodeURIComponent(`${node.name}-VLESS-${targetIP}${suffix}`);
-      const vlessURI = `vless://${user.uuid}@${targetIP}:${node.proxy_port}?encryption=none&flow=xtls-rprx-vision&security=reality&sni=${encodeURIComponent(template.reality_server_name)}&fp=chrome&pbk=${encodeURIComponent(template.reality_public_key)}&sid=${encodeURIComponent(template.reality_short_id || '0123456789abcdef')}&type=tcp&headerType=none#${remark}`;
+      const vlessURI = `vless://${nodeUuid}@${targetIP}:${node.proxy_port}?encryption=none&flow=xtls-rprx-vision&security=reality&sni=${encodeURIComponent(template.reality_server_name)}&fp=chrome&pbk=${encodeURIComponent(template.reality_public_key)}&sid=${encodeURIComponent(template.reality_short_id || '0123456789abcdef')}&type=tcp&headerType=none#${remark}`;
       uris.push(vlessURI);
     }
 
     // Hysteria 2 URI
     if (proto === 'all' || proto === 'hysteria2') {
       const remark = encodeURIComponent(`${node.name}-Hy2-${targetIP}${suffix}`);
-      const hy2Password = user.proxy_password || user.password || '';
       let hy2Sni = template.reality_server_name || targetIP;
       if (template.hy2_masquerade) {
         try {
@@ -238,14 +243,14 @@ export function buildSubscription(
       }
       const upMbps = template.hy2_up_mbps || 100;
       const downMbps = template.hy2_down_mbps || 100;
-      const hy2URI = `hysteria2://${encodeURIComponent(hy2Password)}@${targetIP}:${node.proxy_port}?alpn=h3&insecure=1&allowInsecure=1&sni=${encodeURIComponent(hy2Sni)}&upmbps=${upMbps}&downmbps=${downMbps}#${remark}`;
+      const hy2URI = `hysteria2://${encodeURIComponent(nodePassword)}@${targetIP}:${node.proxy_port}?alpn=h3&insecure=1&allowInsecure=1&sni=${encodeURIComponent(hy2Sni)}&upmbps=${upMbps}&downmbps=${downMbps}#${remark}`;
       uris.push(hy2URI);
 
       // Hysteria 2 Port Hopping URI
       if (node.hop_ports && node.hop_ports.trim()) {
         const hopRemark = encodeURIComponent(`${node.name}-Hy2-Hop-${targetIP}${suffix}`);
         const hopPortRange = node.hop_ports.trim();
-        const hopURI = `hysteria2://${encodeURIComponent(hy2Password)}@${targetIP}:${hopPortRange}?alpn=h3&insecure=1&allowInsecure=1&mport=${encodeURIComponent(hopPortRange)}&sni=${encodeURIComponent(hy2Sni)}&upmbps=${upMbps}&downmbps=${downMbps}#${hopRemark}`;
+        const hopURI = `hysteria2://${encodeURIComponent(nodePassword)}@${targetIP}:${hopPortRange}?alpn=h3&insecure=1&allowInsecure=1&mport=${encodeURIComponent(hopPortRange)}&sni=${encodeURIComponent(hy2Sni)}&upmbps=${upMbps}&downmbps=${downMbps}#${hopRemark}`;
         uris.push(hopURI);
       }
     }
