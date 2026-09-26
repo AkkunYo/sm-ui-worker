@@ -2,6 +2,8 @@ export interface NodeRecord {
   id: number;
   owner_id: number;
   owner_username?: string;
+  owner_uuid?: string;
+  owner_proxy_password?: string;
   name: string;
   server_ip: string;
   proxy_port: number;
@@ -9,6 +11,8 @@ export interface NodeRecord {
   protocol: string; // 'all' | 'vless' | 'hysteria2'
   token: string;
   status: string;
+  used_up_bytes?: number;
+  used_down_bytes?: number;
 }
 
 export interface InboundTemplateRecord {

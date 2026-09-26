@@ -20,6 +20,7 @@ import (
 	"math/big"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -45,6 +46,7 @@ type Config struct {
 type SyncRequest struct {
 	Token         string         `json:"token"`
 	Status        string         `json:"status"`
+	RTTMs         int64          `json:"rtt_ms"`
 	CPUPercent    float64        `json:"cpu_percent"`
 	MemoryPercent float64        `json:"memory_percent"`
 	UptimeSeconds int64          `json:"uptime_seconds"`
@@ -154,6 +156,7 @@ func syncWithMaster(cfg Config, currentVer int) int {
 	cpu := readCPUPercent()
 	mem := readMemPercent()
 	uptime := readSystemUptime()
+	rtt := measureRTT(cfg.MasterURL)
 	trafficDeltas := queryTrafficDeltas()
 
 	if len(trafficDeltas) > 0 {
@@ -163,6 +166,7 @@ func syncWithMaster(cfg Config, currentVer int) int {
 	reqPayload := SyncRequest{
 		Token:         cfg.NodeToken,
 		Status:        "online",
+		RTTMs:         rtt,
 		CPUPercent:    cpu,
 		MemoryPercent: mem,
 		UptimeSeconds: uptime,
@@ -415,6 +419,28 @@ func ensureSelfSignedCert(certPath, keyPath string) {
 			keyOut.Close()
 		}
 	}
+}
+
+func measureRTT(masterURL string) int64 {
+	u, err := url.Parse(masterURL)
+	if err != nil {
+		return 0
+	}
+	host := u.Host
+	if !strings.Contains(host, ":") {
+		if u.Scheme == "http" {
+			host += ":80"
+		} else {
+			host += ":443"
+		}
+	}
+	start := time.Now()
+	conn, err := net.DialTimeout("tcp", host, 3*time.Second)
+	if err != nil {
+		return 0
+	}
+	_ = conn.Close()
+	return time.Since(start).Milliseconds()
 }
 
 func readMemPercent() float64 {

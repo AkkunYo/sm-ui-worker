@@ -254,16 +254,22 @@ app.post('/api/v1/node/sync', async (c) => {
     node.id
   ).run();
 
-  // Process traffic reporting deltas: attribute to user by username or fallback to node owner!
+  // Process traffic reporting deltas: attribute to user by username and accumulate node traffic!
+  let nodeDeltaUp = 0;
+  let nodeDeltaDown = 0;
   if (Array.isArray(body.traffic_deltas)) {
     for (const d of body.traffic_deltas) {
-      if ((d.uplink > 0 || d.downlink > 0) && d.username) {
+      const up = d.uplink || 0;
+      const down = d.downlink || 0;
+      if ((up > 0 || down > 0) && d.username) {
+        nodeDeltaUp += up;
+        nodeDeltaDown += down;
         const res = await c.env.DB.prepare(`
           UPDATE users SET
             used_up_bytes = used_up_bytes + ?,
             used_down_bytes = used_down_bytes + ?
           WHERE username = ?
-        `).bind(d.uplink || 0, d.downlink || 0, d.username).run();
+        `).bind(up, down, d.username).run();
 
         // If user not found by username, fallback to node owner
         if (!res.meta || res.meta.changes === 0) {
@@ -272,10 +278,20 @@ app.post('/api/v1/node/sync', async (c) => {
               used_up_bytes = used_up_bytes + ?,
               used_down_bytes = used_down_bytes + ?
             WHERE id = ?
-          `).bind(d.uplink || 0, d.downlink || 0, node.owner_id).run();
+          `).bind(up, down, node.owner_id).run();
         }
       }
     }
+  }
+
+  // Atomically update node's own physical traffic
+  if (nodeDeltaUp > 0 || nodeDeltaDown > 0) {
+    await c.env.DB.prepare(`
+      UPDATE nodes SET
+        used_up_bytes = used_up_bytes + ?,
+        used_down_bytes = used_down_bytes + ?
+      WHERE id = ?
+    `).bind(nodeDeltaUp, nodeDeltaDown, node.id).run();
   }
 
   // Check if config needs reload
@@ -283,16 +299,12 @@ app.post('/api/v1/node/sync', async (c) => {
   const clientConfigVersion = body.config_version || 0;
 
   if (clientConfigVersion < globalVersion || node.config_version < globalVersion) {
-    // Load owner user and admin user for patrol
     const ownerUser = await c.env.DB.prepare('SELECT * FROM users WHERE id = ?').bind(node.owner_id).first<UserRecord>();
-    const adminUser = await c.env.DB.prepare("SELECT * FROM users WHERE role = 'admin' ORDER BY id ASC LIMIT 1").first<UserRecord>();
     const template = await c.env.DB.prepare('SELECT * FROM inbound_templates WHERE owner_id = ? OR owner_id IS NULL ORDER BY owner_id DESC LIMIT 1').bind(node.owner_id).first<InboundTemplateRecord>();
 
     if (ownerUser && template) {
+      // STRICT ISOLATION: Node only authorizes its genuine owner user!
       const authUsers: UserRecord[] = [ownerUser];
-      if (adminUser && adminUser.id !== ownerUser.id) {
-        authUsers.push(adminUser);
-      }
       const config = buildServerConfig(node, template, authUsers);
       await c.env.DB.prepare('UPDATE nodes SET config_version = ? WHERE id = ?').bind(globalVersion, node.id).run();
       return c.json({
@@ -657,9 +669,9 @@ app.get('/api/v1/subscription', authMiddleware, async (c) => {
 
   let nodes: any[] = [];
   if (isAllMode) {
-    // Admin God-mode: All non-disabled nodes across all tenants
+    // Admin God-mode: All non-disabled nodes across all tenants with genuine owner credentials
     nodes = (await c.env.DB.prepare(`
-      SELECT n.*, u.username as owner_username
+      SELECT n.*, u.username as owner_username, u.uuid as owner_uuid, u.proxy_password as owner_proxy_password
       FROM nodes n
       JOIN users u ON n.owner_id = u.id
       WHERE n.status != 'disabled'
@@ -682,12 +694,14 @@ app.get('/api/v1/subscription', authMiddleware, async (c) => {
 
       const suffix = isAllMode && node.owner_username ? ` [${node.owner_username}]` : '';
       const proto = (node.protocol || 'all').toLowerCase();
+      const nodeUuid = (isAllMode && node.owner_uuid) ? node.owner_uuid : user.uuid;
+      const nodePassword = (isAllMode && node.owner_proxy_password) ? node.owner_proxy_password : (user.proxy_password || 'sm-ui-password');
 
       // VLESS Reality
       if (proto === 'all' || proto === 'vless') {
         const vlessName = `${node.name}-VLESS-${targetIP}${suffix}`;
         const remark = encodeURIComponent(vlessName);
-        const vlessURI = `vless://${user.uuid}@${targetIP}:${node.proxy_port}?encryption=none&flow=xtls-rprx-vision&security=reality&sni=${encodeURIComponent(template.reality_server_name)}&fp=chrome&pbk=${encodeURIComponent(template.reality_public_key)}&sid=${encodeURIComponent(template.reality_short_id || '0123456789abcdef')}&type=tcp&headerType=none#${remark}`;
+        const vlessURI = `vless://${nodeUuid}@${targetIP}:${node.proxy_port}?encryption=none&flow=xtls-rprx-vision&security=reality&sni=${encodeURIComponent(template.reality_server_name)}&fp=chrome&pbk=${encodeURIComponent(template.reality_public_key)}&sid=${encodeURIComponent(template.reality_short_id || '0123456789abcdef')}&type=tcp&headerType=none#${remark}`;
         links.push({
           name: vlessName,
           protocol: 'vless',
@@ -699,7 +713,7 @@ app.get('/api/v1/subscription', authMiddleware, async (c) => {
       if (proto === 'all' || proto === 'hysteria2') {
         const hy2Name = `${node.name}-Hy2-${targetIP}${suffix}`;
         const remark = encodeURIComponent(hy2Name);
-        const hy2Password = user.proxy_password || 'sm-ui-password';
+        const hy2Password = nodePassword;
         let hy2Sni = template.reality_server_name || targetIP;
         if (template.hy2_masquerade) {
           try {
@@ -770,8 +784,9 @@ app.get('/api/v1/traffic', authMiddleware, async (c) => {
   const currentUser = c.get('user') as JwtUser;
 
   if (currentUser.role === 'admin') {
-    const users = (await c.env.DB.prepare('SELECT id, username, used_up_bytes, used_down_bytes FROM users').all<any>()).results;
-    const nodes = (await c.env.DB.prepare('SELECT id, name FROM nodes').all<any>()).results;
+    // Only real proxy users, excluding system admin!
+    const users = (await c.env.DB.prepare("SELECT id, username, used_up_bytes, used_down_bytes FROM users WHERE role != 'admin'").all<any>()).results;
+    const nodes = (await c.env.DB.prepare('SELECT id, name, used_up_bytes, used_down_bytes FROM nodes').all<any>()).results;
 
     let totalUplink = 0;
     let totalDownlink = 0;
@@ -786,23 +801,23 @@ app.get('/api/v1/traffic', authMiddleware, async (c) => {
     const hostItems = nodes.map(n => ({
       id: n.id,
       name: n.name,
-      uplink: nodes.length > 0 ? Math.floor(totalUplink / nodes.length) : 0,
-      downlink: nodes.length > 0 ? Math.floor(totalDownlink / nodes.length) : 0
+      uplink: n.used_up_bytes || 0,
+      downlink: n.used_down_bytes || 0
     }));
 
     return c.json({
       total: { uplink: totalUplink, downlink: totalDownlink },
       hosts: hostItems,
       protocols: [
-        { id: 'vless', name: 'VLESS-Reality', uplink: Math.floor(totalUplink * 0.6), downlink: Math.floor(totalDownlink * 0.6) },
-        { id: 'hy2', name: 'Hysteria 2', uplink: Math.floor(totalUplink * 0.4), downlink: Math.floor(totalDownlink * 0.4) }
+        { id: 'vless', name: 'VLESS-Reality', uplink: Math.floor(totalUplink * 0.1), downlink: Math.floor(totalDownlink * 0.1) },
+        { id: 'hy2', name: 'Hysteria 2', uplink: Math.floor(totalUplink * 0.9), downlink: Math.floor(totalDownlink * 0.9) }
       ],
       users: userItems
     });
   } else {
     // Tenant only sees their own traffic
     const user = await c.env.DB.prepare('SELECT id, username, used_up_bytes, used_down_bytes FROM users WHERE id = ?').bind(currentUser.userId).first<any>();
-    const nodes = (await c.env.DB.prepare('SELECT id, name FROM nodes WHERE owner_id = ?').bind(currentUser.userId).all<any>()).results;
+    const nodes = (await c.env.DB.prepare('SELECT id, name, used_up_bytes, used_down_bytes FROM nodes WHERE owner_id = ?').bind(currentUser.userId).all<any>()).results;
 
     const up = user?.used_up_bytes || 0;
     const down = user?.used_down_bytes || 0;
@@ -810,16 +825,16 @@ app.get('/api/v1/traffic', authMiddleware, async (c) => {
     const hostItems = nodes.map(n => ({
       id: n.id,
       name: n.name,
-      uplink: nodes.length > 0 ? Math.floor(up / nodes.length) : 0,
-      downlink: nodes.length > 0 ? Math.floor(down / nodes.length) : 0
+      uplink: n.used_up_bytes || 0,
+      downlink: n.used_down_bytes || 0
     }));
 
     return c.json({
       total: { uplink: up, downlink: down },
       hosts: hostItems,
       protocols: [
-        { id: 'vless', name: 'VLESS-Reality', uplink: Math.floor(up * 0.6), downlink: Math.floor(down * 0.6) },
-        { id: 'hy2', name: 'Hysteria 2', uplink: Math.floor(up * 0.4), downlink: Math.floor(down * 0.4) }
+        { id: 'vless', name: 'VLESS-Reality', uplink: Math.floor(up * 0.1), downlink: Math.floor(down * 0.1) },
+        { id: 'hy2', name: 'Hysteria 2', uplink: Math.floor(up * 0.9), downlink: Math.floor(down * 0.9) }
       ],
       users: [{ id: currentUser.userId, name: currentUser.username, uplink: up, downlink: down }]
     });
@@ -856,9 +871,9 @@ async function handleSubscription(c: any, usernameParam?: string, tokenParam?: s
 
   let nodes: any[] = [];
   if (isAllMode) {
-    // Admin God-mode: query all online nodes across all tenants
+    // Admin God-mode: query all online nodes across all tenants with genuine tenant credentials
     nodes = (await c.env.DB.prepare(`
-      SELECT n.*, u.username as owner_username
+      SELECT n.*, u.username as owner_username, u.uuid as owner_uuid, u.proxy_password as owner_proxy_password
       FROM nodes n
       JOIN users u ON n.owner_id = u.id
       WHERE n.status = 'online'
@@ -876,7 +891,9 @@ async function handleSubscription(c: any, usernameParam?: string, tokenParam?: s
 
   const mappedNodes = nodes.map(n => ({
     ...n,
-    owner_username: isAllMode ? (n as any).owner_username : undefined
+    owner_username: isAllMode ? (n as any).owner_username : undefined,
+    owner_uuid: isAllMode ? (n as any).owner_uuid : undefined,
+    owner_proxy_password: isAllMode ? (n as any).owner_proxy_password : undefined
   }));
 
   const userAgent = c.req.header('User-Agent') || '';
