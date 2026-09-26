@@ -250,7 +250,7 @@ app.post('/api/v1/node/sync', async (c) => {
     body.cpu_percent || 0,
     body.memory_percent || 0,
     body.uptime_seconds || 0,
-    body.core_version || 'v1.11.4',
+    body.core_version || 'v1.14.2',
     node.id
   ).run();
 
