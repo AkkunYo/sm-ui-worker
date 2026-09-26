@@ -1,0 +1,94 @@
+name: Release & Multi-Arch Build
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  packages: write
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: akkunyo/sm-node
+
+jobs:
+  # 1. Compile sm-node multi-arch binaries
+  build-agent-binaries:
+    name: Build & Release Node Binaries
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+          cache: true
+
+      - name: Compile sm-node
+        run: |
+          mkdir -p dist/amd64 dist/arm64 release-assets
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="-s -w" -o dist/amd64/sm-node ./agent/main.go
+          CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -ldflags="-s -w" -o dist/arm64/sm-node ./agent/main.go
+          tar -czf release-assets/sm-node-linux-amd64.tar.gz -C dist/amd64 sm-node
+          tar -czf release-assets/sm-node-linux-arm64.tar.gz -C dist/arm64 sm-node
+          cd release-assets && sha256sum sm-node-linux-amd64.tar.gz sm-node-linux-arm64.tar.gz > sha256sums.txt
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            release-assets/sm-node-linux-amd64.tar.gz
+            release-assets/sm-node-linux-arm64.tar.gz
+            release-assets/sha256sums.txt
+          name: SM-UI Worker ${{ github.ref_name }}
+          draft: false
+          prerelease: false
+          generate_release_notes: true
+
+  # 2. Build and publish multi-arch sm-node docker image
+  publish-container:
+    name: Build & Publish Node Container
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Generate image metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          tags: |
+            type=raw,value=latest
+            type=ref,event=tag
+            type=semver,pattern={{version}}
+
+      - name: Build and push multi-arch image
+        uses: docker/build-push-action@v6
+        with:
+          context: ./agent
+          file: ./agent/Dockerfile
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
