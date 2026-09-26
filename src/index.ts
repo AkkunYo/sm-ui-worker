@@ -670,12 +670,12 @@ app.get('/api/v1/subscription', authMiddleware, async (c) => {
       const targetIP = ips[0] || '';
       if (!targetIP) continue;
 
-      const prefix = isAllMode ? `[${node.owner_username}]-` : '';
+      const suffix = isAllMode && node.owner_username ? ` [${node.owner_username}]` : '';
       const proto = (node.protocol || 'all').toLowerCase();
 
       // VLESS Reality
       if (proto === 'all' || proto === 'vless') {
-        const vlessName = `${prefix}${node.name}-VLESS-${targetIP}`;
+        const vlessName = `${node.name}-VLESS-${targetIP}${suffix}`;
         const remark = encodeURIComponent(vlessName);
         const vlessURI = `vless://${user.uuid}@${targetIP}:${node.proxy_port}?encryption=none&flow=xtls-rprx-vision&security=reality&sni=${encodeURIComponent(template.reality_server_name)}&fp=chrome&pbk=${encodeURIComponent(template.reality_public_key)}&sid=${encodeURIComponent(template.reality_short_id || '0123456789abcdef')}&type=tcp&headerType=none#${remark}`;
         links.push({
@@ -687,7 +687,7 @@ app.get('/api/v1/subscription', authMiddleware, async (c) => {
 
       // Hysteria 2
       if (proto === 'all' || proto === 'hysteria2') {
-        const hy2Name = `${prefix}${node.name}-Hy2-${targetIP}`;
+        const hy2Name = `${node.name}-Hy2-${targetIP}${suffix}`;
         const remark = encodeURIComponent(hy2Name);
         const hy2Password = user.proxy_password || 'sm-ui-password';
         let hy2Sni = template.reality_server_name || targetIP;
@@ -708,7 +708,7 @@ app.get('/api/v1/subscription', authMiddleware, async (c) => {
 
         // Hysteria 2 Port Hopping URI
         if (node.hop_ports && node.hop_ports.trim()) {
-          const hopName = `${prefix}${node.name}-Hy2-Hop-${targetIP}`;
+          const hopName = `${node.name}-Hy2-Hop-${targetIP}${suffix}`;
           const hopRemark = encodeURIComponent(hopName);
           const hopPortRange = node.hop_ports.trim();
           const hopURI = `hysteria2://${encodeURIComponent(hy2Password)}@${targetIP}:${hopPortRange}?alpn=h3&insecure=1&allowInsecure=1&mport=${encodeURIComponent(hopPortRange)}&sni=${encodeURIComponent(hy2Sni)}&upmbps=${upMbps}&downmbps=${downMbps}#${hopRemark}`;
@@ -866,7 +866,7 @@ async function handleSubscription(c: any, usernameParam?: string, tokenParam?: s
 
   const mappedNodes = nodes.map(n => ({
     ...n,
-    name: isAllMode && (n as any).owner_username ? `[${(n as any).owner_username}] ${n.name}` : n.name
+    owner_username: isAllMode ? (n as any).owner_username : undefined
   }));
 
   const userAgent = c.req.header('User-Agent') || '';

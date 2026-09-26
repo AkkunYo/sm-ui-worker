@@ -1,6 +1,7 @@
 export interface NodeRecord {
   id: number;
   owner_id: number;
+  owner_username?: string;
   name: string;
   server_ip: string;
   proxy_port: number;

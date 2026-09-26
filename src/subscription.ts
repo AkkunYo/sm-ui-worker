@@ -26,10 +26,11 @@ export function buildSubscription(
       const ips = node.server_ip.split(',').map(s => s.trim()).filter(Boolean);
       const targetIP = ips[0] || '127.0.0.1';
       const proto = (node.protocol || 'all').toLowerCase();
+      const suffix = node.owner_username ? ` [${node.owner_username}]` : '';
 
       // VLESS Reality
       if (proto === 'all' || proto === 'vless') {
-        const name = `${node.name}-VLESS-${targetIP}`;
+        const name = `${node.name}-VLESS-${targetIP}${suffix}`;
         proxies.push({
           name,
           type: 'vless',
@@ -58,7 +59,7 @@ export function buildSubscription(
             if (u.hostname) hy2Sni = u.hostname;
           } catch {}
         }
-        const name = `${node.name}-Hy2-${targetIP}`;
+        const name = `${node.name}-Hy2-${targetIP}${suffix}`;
         proxies.push({
           name,
           type: 'hysteria2',
@@ -74,7 +75,7 @@ export function buildSubscription(
 
         // Port Hopping in Clash
         if (node.hop_ports && node.hop_ports.trim()) {
-          const hopName = `${node.name}-Hy2-Hop-${targetIP}`;
+          const hopName = `${node.name}-Hy2-Hop-${targetIP}${suffix}`;
           proxies.push({
             name: hopName,
             type: 'hysteria2',
@@ -138,10 +139,11 @@ export function buildSubscription(
       const ips = node.server_ip.split(',').map(s => s.trim()).filter(Boolean);
       const targetIP = ips[0] || '127.0.0.1';
       const proto = (node.protocol || 'all').toLowerCase();
+      const suffix = node.owner_username ? ` [${node.owner_username}]` : '';
 
       // VLESS Reality
       if (proto === 'all' || proto === 'vless') {
-        const tag = `${node.name}-VLESS-${targetIP}`;
+        const tag = `${node.name}-VLESS-${targetIP}${suffix}`;
         outbounds.push({
           type: 'vless',
           tag,
@@ -165,7 +167,7 @@ export function buildSubscription(
 
       // Hysteria 2
       if (proto === 'all' || proto === 'hysteria2') {
-        const tag = `${node.name}-Hy2-${targetIP}`;
+        const tag = `${node.name}-Hy2-${targetIP}${suffix}`;
         outbounds.push({
           type: 'hysteria2',
           tag,
@@ -214,17 +216,18 @@ export function buildSubscription(
     const ips = node.server_ip.split(',').map(s => s.trim()).filter(Boolean);
     const targetIP = ips[0] || '127.0.0.1';
     const proto = (node.protocol || 'all').toLowerCase();
+    const suffix = node.owner_username ? ` [${node.owner_username}]` : '';
 
     // VLESS Reality URI
     if (proto === 'all' || proto === 'vless') {
-      const remark = encodeURIComponent(`${node.name}-VLESS-${targetIP}`);
+      const remark = encodeURIComponent(`${node.name}-VLESS-${targetIP}${suffix}`);
       const vlessURI = `vless://${user.uuid}@${targetIP}:${node.proxy_port}?encryption=none&flow=xtls-rprx-vision&security=reality&sni=${encodeURIComponent(template.reality_server_name)}&fp=chrome&pbk=${encodeURIComponent(template.reality_public_key)}&sid=${encodeURIComponent(template.reality_short_id || '0123456789abcdef')}&type=tcp&headerType=none#${remark}`;
       uris.push(vlessURI);
     }
 
     // Hysteria 2 URI
     if (proto === 'all' || proto === 'hysteria2') {
-      const remark = encodeURIComponent(`${node.name}-Hy2-${targetIP}`);
+      const remark = encodeURIComponent(`${node.name}-Hy2-${targetIP}${suffix}`);
       const hy2Password = user.proxy_password || user.password || '';
       let hy2Sni = template.reality_server_name || targetIP;
       if (template.hy2_masquerade) {
@@ -240,7 +243,7 @@ export function buildSubscription(
 
       // Hysteria 2 Port Hopping URI
       if (node.hop_ports && node.hop_ports.trim()) {
-        const hopRemark = encodeURIComponent(`${node.name}-Hy2-Hop-${targetIP}`);
+        const hopRemark = encodeURIComponent(`${node.name}-Hy2-Hop-${targetIP}${suffix}`);
         const hopPortRange = node.hop_ports.trim();
         const hopURI = `hysteria2://${encodeURIComponent(hy2Password)}@${targetIP}:${hopPortRange}?alpn=h3&insecure=1&allowInsecure=1&mport=${encodeURIComponent(hopPortRange)}&sni=${encodeURIComponent(hy2Sni)}&upmbps=${upMbps}&downmbps=${downMbps}#${hopRemark}`;
         uris.push(hopURI);
