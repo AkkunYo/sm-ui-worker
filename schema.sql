@@ -30,6 +30,7 @@ CREATE TABLE IF NOT EXISTS nodes (
   name TEXT NOT NULL,
   server_ip TEXT NOT NULL DEFAULT '',
   proxy_port INTEGER DEFAULT 443,
+  hop_ports TEXT DEFAULT '',
   protocol TEXT DEFAULT 'all',
   token TEXT UNIQUE NOT NULL,
   status TEXT DEFAULT 'offline',

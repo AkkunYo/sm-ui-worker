@@ -51,6 +51,13 @@ export function buildSubscription(
 
       // Hysteria 2
       if (proto === 'all' || proto === 'hysteria2') {
+        let hy2Sni = template.reality_server_name || targetIP;
+        if (template.hy2_masquerade) {
+          try {
+            const u = new URL(template.hy2_masquerade.startsWith('http') ? template.hy2_masquerade : `https://${template.hy2_masquerade}`);
+            if (u.hostname) hy2Sni = u.hostname;
+          } catch {}
+        }
         const name = `${node.name}-Hy2-${targetIP}`;
         proxies.push({
           name,
@@ -58,12 +65,30 @@ export function buildSubscription(
           server: targetIP,
           port: node.proxy_port,
           password: user.proxy_password || user.password || '',
-          sni: template.reality_server_name,
+          sni: hy2Sni,
           'skip-cert-verify': true,
           up: `${template.hy2_up_mbps || 100} Mbps`,
           down: `${template.hy2_down_mbps || 100} Mbps`
         });
         proxyNames.push(name);
+
+        // Port Hopping in Clash
+        if (node.hop_ports && node.hop_ports.trim()) {
+          const hopName = `${node.name}-Hy2-Hop-${targetIP}`;
+          proxies.push({
+            name: hopName,
+            type: 'hysteria2',
+            server: targetIP,
+            port: node.proxy_port,
+            ports: node.hop_ports.trim(),
+            password: user.proxy_password || user.password || '',
+            sni: hy2Sni,
+            'skip-cert-verify': true,
+            up: `${template.hy2_up_mbps || 100} Mbps`,
+            down: `${template.hy2_down_mbps || 100} Mbps`
+          });
+          proxyNames.push(hopName);
+        }
       }
     }
 
@@ -212,6 +237,14 @@ export function buildSubscription(
       const downMbps = template.hy2_down_mbps || 100;
       const hy2URI = `hysteria2://${encodeURIComponent(hy2Password)}@${targetIP}:${node.proxy_port}?alpn=h3&insecure=1&allowInsecure=1&sni=${encodeURIComponent(hy2Sni)}&upmbps=${upMbps}&downmbps=${downMbps}#${remark}`;
       uris.push(hy2URI);
+
+      // Hysteria 2 Port Hopping URI
+      if (node.hop_ports && node.hop_ports.trim()) {
+        const hopRemark = encodeURIComponent(`${node.name}-Hy2-Hop-${targetIP}`);
+        const hopPortRange = node.hop_ports.trim();
+        const hopURI = `hysteria2://${encodeURIComponent(hy2Password)}@${targetIP}:${hopPortRange}?alpn=h3&insecure=1&allowInsecure=1&mport=${encodeURIComponent(hopPortRange)}&sni=${encodeURIComponent(hy2Sni)}&upmbps=${upMbps}&downmbps=${downMbps}#${hopRemark}`;
+        uris.push(hopURI);
+      }
     }
   }
 
