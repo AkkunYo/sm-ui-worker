@@ -621,7 +621,6 @@ const activeTab = ref('docker')
 const copiedTab = ref('')
 const hideAddresses = ref(false)
 const togglingId = ref(null)
-let eventSource = null
 
 const activeJoinURL = computed(() => {
   const token = activeInstructionNode.value?.token || ''
@@ -821,26 +820,6 @@ function copyCommand(text, tabId) {
   }, 2000)
 }
 
-function setupSSE() {
-  const token = getToken()
-  if (!token) return
-  eventSource = new EventSource(`/api/v1/events?token=${token}`)
-  eventSource.onmessage = (event) => {
-    try {
-      const data = JSON.parse(event.data)
-      if (Array.isArray(data?.nodes)) {
-        nodeRevision++
-        nodes.value = data.nodes
-        loaded.value = true
-        loadError.value = ''
-      }
-    } catch (e) {
-      console.error('SSE error:', e)
-    }
-  }
-}
-
-
 const showEditModal = ref(false)
 const savingEdit = ref(false)
 const editForm = reactive({
@@ -889,10 +868,5 @@ async function saveEditNode() {
 
 onMounted(() => {
   loadNodes()
-  setupSSE()
-})
-
-onUnmounted(() => {
-  if (eventSource) eventSource.close()
 })
 </script>

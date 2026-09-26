@@ -192,7 +192,7 @@ const tenantsList = ref([])
 const profile = ref(null), links = ref([]), active = ref(false), loading = ref(false), error = ref(''), notice = ref('')
 const tab = ref('links'), platform = ref(/iphone|ipad|macintosh/i.test(navigator.userAgent) ? 'ios' : /android/i.test(navigator.userAgent) ? 'android' : 'desktop')
 const qr = ref(null), mainQR = ref(''), settingsOpen = ref(false), settingsError = ref(''), saving = ref(false), form = ref({})
-let timer, noticeTimer
+let noticeTimer
 const tabs = [{ id: 'links', label: '订阅链接', icon: Link2 }, { id: 'apps', label: '客户端导入', icon: AppWindow }, { id: 'configs', label: '节点配置', icon: List }]
 const platforms = [{ id: 'android', label: 'Android' }, { id: 'ios', label: 'iOS / macOS' }, { id: 'desktop', label: '桌面客户端' }]
 const used = computed(() => (profile.value?.used_up_bytes || 0) + (profile.value?.used_down_bytes || 0))
@@ -306,9 +306,8 @@ async function resetSubscription() {
 onMounted(() => {
   load()
   loadTenants()
-  timer = setInterval(load, 10000)
 })
-onUnmounted(() => { clearInterval(timer); clearTimeout(noticeTimer) })
+onUnmounted(() => { clearTimeout(noticeTimer) })
 </script>
 
 <style scoped>
