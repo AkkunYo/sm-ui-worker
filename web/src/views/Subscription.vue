@@ -14,6 +14,22 @@
     <p v-if="notice" role="status" class="rounded-xl bg-violet-500/10 text-violet-200 p-3">{{ notice }}</p>
     <PageSkeleton v-if="!profile && !error" label="正在加载订阅…" :rows="4" />
     <template v-if="profile">
+      <!-- Empty Hosts Warning Banner -->
+      <div v-if="links.length === 0" role="status" class="rounded-2xl border border-amber-500/30 bg-amber-500/10 p-5 text-amber-200 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+        <div class="flex items-center gap-3">
+          <div class="p-2.5 rounded-xl bg-amber-500/20 text-amber-300 shrink-0">
+            <Server class="w-5 h-5" />
+          </div>
+          <div>
+            <p class="text-sm font-semibold text-white">暂未接入任何节点主机</p>
+            <p class="text-xs text-amber-300/80 mt-0.5">当前尚未添加 VPS 主机实例。请先前往“节点主机”添加并接入您的首台机器，连接成功后订阅配置将自动生效并包含节点。</p>
+          </div>
+        </div>
+        <router-link to="/nodes" class="sub-button sub-primary whitespace-nowrap text-xs">
+          前往添加接入主机 &rarr;
+        </router-link>
+      </div>
+
       <section class="rounded-2xl border border-violet-500/20 bg-gradient-to-br from-violet-950/50 to-slate-900 p-6 md:p-8 flex flex-col sm:flex-row gap-8 items-center">
         <div class="relative w-40 h-40 shrink-0">
           <svg viewBox="0 0 120 120" class="w-full h-full -rotate-90" aria-hidden="true"><circle cx="60" cy="60" r="52" fill="none" stroke="#312648" stroke-width="7" /><circle cx="60" cy="60" r="52" fill="none" :stroke="active ? '#a78bfa' : '#fb7185'" stroke-width="7" stroke-linecap="round" :stroke-dasharray="`${percent * 3.267} 326.7`" /></svg>
@@ -57,7 +73,13 @@
           </div>
           <div v-else class="space-y-4">
             <div class="flex justify-between items-center gap-3"><p class="text-xs text-slate-400">单独导入某个节点，或复制全部配置。</p><button class="sub-button" :disabled="!links.length" @click="copy(links.map(link => link.uri).join('\n'))"><Copy class="w-4 h-4" />复制全部</button></div>
-            <div v-if="!links.length" class="py-10 text-center text-slate-500">{{ active ? '暂无可用配置，请确认节点核心正在运行且配置已生效。' : '订阅当前不可用，请检查订阅设置。' }}</div>
+            <div v-if="!links.length" class="py-12 text-center text-slate-400 space-y-3">
+              <Server class="w-8 h-8 text-slate-600 mx-auto" />
+              <p class="text-sm">{{ active ? '暂无可用的节点配置，请先添加接入 VPS 主机。' : '订阅当前不可用，请检查订阅设置。' }}</p>
+              <router-link to="/nodes" class="sub-button sub-primary inline-flex text-xs">
+                前往添加接入主机 &rarr;
+              </router-link>
+            </div>
             <div v-for="link in links" :key="link.uri" class="sub-row"><span class="text-[10px] font-semibold px-2 py-1 rounded bg-violet-500/10 text-violet-300 border border-violet-500/20">{{ link.protocol === 'vless' ? 'VLESS' : 'HY2' }}</span><p class="text-sm text-white flex-1 truncate" :title="link.name">{{ link.name }}</p><button class="sub-icon" :aria-label="`复制${link.name}`" @click="copy(link.uri)"><Copy class="w-4 h-4" /></button><button class="sub-icon" :aria-label="`${link.name}二维码`" @click="showQR(link.uri, link.name)"><QrCode class="w-4 h-4" /></button></div>
           </div>
         </div>
@@ -90,7 +112,7 @@
 
 <script setup>
 import { ref, computed, onMounted, onUnmounted } from 'vue'
-import { Link2, List, AppWindow, Copy, QrCode, Download, RefreshCw, X } from 'lucide-vue-next'
+import { Link2, List, AppWindow, Copy, QrCode, Download, RefreshCw, X, Server } from 'lucide-vue-next'
 import QRCode from 'qrcode'
 import { request, formatBytes } from '../api'
 import PageSkeleton from '../components/PageSkeleton.vue'

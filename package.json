@@ -6,7 +6,7 @@
   "type": "module",
   "scripts": {
     "dev": "wrangler dev",
-    "build:web": "cd web && npm install && npm run build",
+    "build:web": "cd web && (test -d node_modules || npm install --no-audit --no-fund) && npm run build",
     "build": "node scripts/prepare-deploy.js && npm run build:web",
     "deploy": "npm run build && wrangler deploy",
     "cf-typegen": "wrangler types"
