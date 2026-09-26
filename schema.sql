@@ -38,7 +38,7 @@ CREATE TABLE IF NOT EXISTS nodes (
   cpu_percent REAL DEFAULT 0,
   memory_percent REAL DEFAULT 0,
   uptime_seconds INTEGER DEFAULT 0,
-  core_version TEXT DEFAULT 'v1.11.4',
+  core_version TEXT DEFAULT 'v1.14.2',
   config_version INTEGER DEFAULT 1,
   created_at TEXT DEFAULT (datetime('now')),
   updated_at TEXT DEFAULT (datetime('now')),

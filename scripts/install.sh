@@ -27,8 +27,8 @@ DATA_DIR="/var/lib/sm-ui"
 
 mkdir -p "$DATA_DIR/bin" "$DATA_DIR/configs" "$DATA_DIR/certs"
 
-echo "--> Installing sing-box core (v1.11.4)..."
-curl -fsSL "https://github.com/SagerNet/sing-box/releases/download/v1.11.4/sing-box-1.11.4-linux-${GOARCH}.tar.gz" -o /tmp/sb.tar.gz
+echo "--> Installing sing-box core (v1.14.2)..."
+curl -fsSL "https://github.com/SagerNet/sing-box/releases/download/v1.14.2/sing-box-1.14.2-linux-${GOARCH}.tar.gz" -o /tmp/sb.tar.gz
 tar -xzf /tmp/sb.tar.gz -C /tmp
 mv /tmp/sing-box-*/sing-box "$INSTALL_DIR/sing-box"
 chmod +x "$INSTALL_DIR/sing-box"

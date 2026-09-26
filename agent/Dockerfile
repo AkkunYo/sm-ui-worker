@@ -12,8 +12,8 @@ RUN apk add --no-cache ca-certificates tzdata iptables iproute2 curl bash tar gz
 WORKDIR /app
 COPY --from=builder /bin/sm-node /usr/local/bin/sm-node
 
-# Pre-install official sing-box core binary
-ARG SING_BOX_VERSION=1.11.4
+# Pre-install official sing-box core binary (Fixed version 1.14.2)
+ARG SING_BOX_VERSION=1.14.2
 RUN set -eux; \
     ARCH="${TARGETARCH:-amd64}"; \
     case "${ARCH}" in \

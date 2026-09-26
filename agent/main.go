@@ -156,7 +156,7 @@ func syncWithMaster(cfg Config, currentVer int) int {
 		CPUPercent:    cpu,
 		MemoryPercent: mem,
 		UptimeSeconds: uptime,
-		CoreVersion:   "v1.11.4",
+		CoreVersion:   "v1.14.2",
 		ConfigVersion: currentVer,
 	}
 
@@ -320,7 +320,7 @@ func ensureSingBoxBinary(baseDir string) error {
 	if goos != "linux" {
 		goos = "linux"
 	}
-	version := "1.11.4"
+	version := "1.14.2"
 	filename := fmt.Sprintf("sing-box-%s-%s-%s.tar.gz", version, goos, arch)
 	url := fmt.Sprintf("https://github.com/SagerNet/sing-box/releases/download/v%s/%s", version, filename)
 

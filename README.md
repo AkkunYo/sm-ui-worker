@@ -94,7 +94,7 @@ curl -fsSL https://raw.githubusercontent.com/AkkunYo/sm-ui-worker/main/scripts/i
   bash
 ```
 
-启动后，VPS 节点将自动下载/就绪官方 `sing-box v1.11.4`，并在控制面板秒级亮起在线绿灯！
+启动后，VPS 节点将自动下载/就绪官方 `sing-box v1.14.2`，并在控制面板秒级亮起在线绿灯！
 
 ---
 
