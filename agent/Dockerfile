@@ -8,7 +8,7 @@ RUN CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH} go build -ldflags
 
 FROM alpine:3.20
 ARG TARGETARCH
-RUN apk add --no-cache ca-certificates tzdata iptables iproute2 curl bash tar gzip
+RUN apk add --no-cache ca-certificates tzdata iptables iproute2 curl bash tar gzip gcompat
 WORKDIR /app
 COPY --from=builder /bin/sm-node /usr/local/bin/sm-node
 
