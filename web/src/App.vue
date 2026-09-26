@@ -188,14 +188,13 @@ async function syncProfile() {
     const profile = await request('/api/v1/system/profile')
     if (profile && profile.username) {
       currentUser.value = profile
-      setUser(profile)
+      localStorage.setItem('sm_ui_user', JSON.stringify(profile))
     }
   } catch (err) {}
 }
 
 function handleAuthChanged() {
   currentUser.value = getUser()
-  syncProfile()
 }
 
 onMounted(() => {
