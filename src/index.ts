@@ -3,7 +3,7 @@ import { cors } from 'hono/cors';
 import { sign, verify } from 'hono/jwt';
 import { ensureInitialDefaults, getJwtSecret, isSetupCompleted, type Env } from './db';
 import { generateRealityKeyPair, generateToken, generateUUID } from './keys';
-import { buildServerConfig, type NodeRecord, type InboundTemplateRecord, type UserRecord } from './protocol';
+import { buildServerConfig, isUserActive, type NodeRecord, type InboundTemplateRecord, type UserRecord } from './protocol';
 import { buildSubscription } from './subscription';
 
 interface JwtUser {
@@ -16,8 +16,8 @@ const app = new Hono<{ Bindings: Env; Variables: { user: JwtUser } }>();
 
 app.use('*', cors());
 
-// Initialize defaults on request
-app.use('*', async (c, next) => {
+// Initialize defaults only on API routes (static assets bypass DB)
+app.use('/api/*', async (c, next) => {
   await ensureInitialDefaults(c.env.DB);
   await next();
 });
@@ -853,8 +853,8 @@ async function handleSubscription(c: any, usernameParam?: string, tokenParam?: s
     user = await c.env.DB.prepare('SELECT * FROM users WHERE sub_token = ?').bind(token).first<any>();
   }
 
-  if (!user || user.status !== 1) {
-    return c.text('Subscription not found or disabled', 404);
+  if (!user || !isUserActive(user)) {
+    return c.text('Subscription not found, expired, or traffic limit exceeded', 403);
   }
 
   const isAllMode = user.role === 'admin' && c.req.query('all') === 'true';

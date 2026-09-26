@@ -37,6 +37,18 @@ export interface UserRecord {
   password?: string;
   sub_token: string;
   status: number;
+  traffic_limit_bytes?: number;
+  used_up_bytes?: number;
+  used_down_bytes?: number;
+  expire_at?: string | null;
+}
+
+export function isUserActive(u: UserRecord): boolean {
+  if (u.status !== 1) return false;
+  if (u.expire_at && new Date(u.expire_at) <= new Date()) return false;
+  const used = (u.used_up_bytes || 0) + (u.used_down_bytes || 0);
+  if (u.traffic_limit_bytes && u.traffic_limit_bytes > 0 && used >= u.traffic_limit_bytes) return false;
+  return true;
 }
 
 export function buildServerConfig(
@@ -45,7 +57,7 @@ export function buildServerConfig(
   users: UserRecord[],
   baseDir = '/var/lib/sm-ui'
 ) {
-  const activeUsers = users.filter(u => u.status === 1);
+  const activeUsers = users.filter(isUserActive);
   const activeUserNames = activeUsers.map(u => u.username);
 
   const vlessUsers = activeUsers.map(u => ({
