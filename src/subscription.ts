@@ -193,7 +193,7 @@ export function buildSubscription(
     // VLESS Reality URI
     if (proto === 'all' || proto === 'vless') {
       const remark = encodeURIComponent(`${node.name}-VLESS-${targetIP}`);
-      const vlessURI = `vless://${user.uuid}@${targetIP}:${node.proxy_port}?flow=xtls-rprx-vision&security=reality&sni=${encodeURIComponent(template.reality_server_name)}&pbk=${encodeURIComponent(template.reality_public_key)}&sid=${encodeURIComponent(template.reality_short_id || '0123456789abcdef')}&type=tcp&fp=chrome#${remark}`;
+      const vlessURI = `vless://${user.uuid}@${targetIP}:${node.proxy_port}?encryption=none&flow=xtls-rprx-vision&security=reality&sni=${encodeURIComponent(template.reality_server_name)}&fp=chrome&pbk=${encodeURIComponent(template.reality_public_key)}&sid=${encodeURIComponent(template.reality_short_id || '0123456789abcdef')}&type=tcp&headerType=none#${remark}`;
       uris.push(vlessURI);
     }
 
@@ -201,7 +201,16 @@ export function buildSubscription(
     if (proto === 'all' || proto === 'hysteria2') {
       const remark = encodeURIComponent(`${node.name}-Hy2-${targetIP}`);
       const hy2Password = user.proxy_password || user.password || '';
-      const hy2URI = `hysteria2://${encodeURIComponent(hy2Password)}@${targetIP}:${node.proxy_port}?sni=${encodeURIComponent(template.reality_server_name)}&insecure=1&alpn=h3#${remark}`;
+      let hy2Sni = template.reality_server_name || targetIP;
+      if (template.hy2_masquerade) {
+        try {
+          const u = new URL(template.hy2_masquerade.startsWith('http') ? template.hy2_masquerade : `https://${template.hy2_masquerade}`);
+          if (u.hostname) hy2Sni = u.hostname;
+        } catch {}
+      }
+      const upMbps = template.hy2_up_mbps || 100;
+      const downMbps = template.hy2_down_mbps || 100;
+      const hy2URI = `hysteria2://${encodeURIComponent(hy2Password)}@${targetIP}:${node.proxy_port}?alpn=h3&insecure=1&allowInsecure=1&sni=${encodeURIComponent(hy2Sni)}&upmbps=${upMbps}&downmbps=${downMbps}#${remark}`;
       uris.push(hy2URI);
     }
   }

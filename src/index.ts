@@ -667,24 +667,38 @@ app.get('/api/v1/subscription', authMiddleware, async (c) => {
       const targetIP = ips[0] || '';
       if (!targetIP) continue;
 
-      const prefix = isAllMode ? `[${node.owner_username}] ` : '';
+      const prefix = isAllMode ? `[${node.owner_username}]-` : '';
       const proto = (node.protocol || 'all').toLowerCase();
+
       // VLESS Reality
       if (proto === 'all' || proto === 'vless') {
-        const remark = encodeURIComponent(`${prefix}${node.name} (VLESS-Reality)`);
-        const vlessURI = `vless://${user.uuid}@${targetIP}:${node.proxy_port}?flow=xtls-rprx-vision&security=reality&sni=${encodeURIComponent(template.reality_server_name)}&pbk=${encodeURIComponent(template.reality_public_key)}&sid=${encodeURIComponent(template.reality_short_id || '0123456789abcdef')}&type=tcp&fp=chrome#${remark}`;
+        const vlessName = `${prefix}${node.name}-VLESS-${targetIP}`;
+        const remark = encodeURIComponent(vlessName);
+        const vlessURI = `vless://${user.uuid}@${targetIP}:${node.proxy_port}?encryption=none&flow=xtls-rprx-vision&security=reality&sni=${encodeURIComponent(template.reality_server_name)}&fp=chrome&pbk=${encodeURIComponent(template.reality_public_key)}&sid=${encodeURIComponent(template.reality_short_id || '0123456789abcdef')}&type=tcp&headerType=none#${remark}`;
         links.push({
-          name: `${prefix}${node.name} (VLESS-Reality)`,
+          name: vlessName,
           protocol: 'vless',
           uri: vlessURI
         });
       }
+
       // Hysteria 2
       if (proto === 'all' || proto === 'hysteria2') {
-        const remark = encodeURIComponent(`${prefix}${node.name} (Hysteria 2)`);
-        const hy2URI = `hysteria2://${encodeURIComponent(user.proxy_password || 'sm-ui-password')}@${targetIP}:${node.proxy_port}?sni=${encodeURIComponent(template.reality_server_name)}&insecure=1&alpn=h3#${remark}`;
+        const hy2Name = `${prefix}${node.name}-Hy2-${targetIP}`;
+        const remark = encodeURIComponent(hy2Name);
+        const hy2Password = user.proxy_password || 'sm-ui-password';
+        let hy2Sni = template.reality_server_name || targetIP;
+        if (template.hy2_masquerade) {
+          try {
+            const u = new URL(template.hy2_masquerade.startsWith('http') ? template.hy2_masquerade : `https://${template.hy2_masquerade}`);
+            if (u.hostname) hy2Sni = u.hostname;
+          } catch {}
+        }
+        const upMbps = template.hy2_up_mbps || 100;
+        const downMbps = template.hy2_down_mbps || 100;
+        const hy2URI = `hysteria2://${encodeURIComponent(hy2Password)}@${targetIP}:${node.proxy_port}?alpn=h3&insecure=1&allowInsecure=1&sni=${encodeURIComponent(hy2Sni)}&upmbps=${upMbps}&downmbps=${downMbps}#${remark}`;
         links.push({
-          name: `${prefix}${node.name} (Hysteria 2)`,
+          name: hy2Name,
           protocol: 'hy2',
           uri: hy2URI
         });
