@@ -106,6 +106,7 @@ func main() {
 	_ = os.MkdirAll(filepath.Join(cfg.BaseDir, "bin"), 0755)
 	_ = os.MkdirAll(filepath.Join(cfg.BaseDir, "configs"), 0755)
 	_ = os.MkdirAll(filepath.Join(cfg.BaseDir, "certs"), 0755)
+	ensureSelfSignedCert(filepath.Join(cfg.BaseDir, "certs", "selfsigned.crt"), filepath.Join(cfg.BaseDir, "certs", "selfsigned.key"))
 	ensureSelfSignedCert(filepath.Join(cfg.BaseDir, "certs", "hy2.crt"), filepath.Join(cfg.BaseDir, "certs", "hy2.key"))
 
 	// Ensure sing-box binary
