@@ -1,0 +1,34 @@
+{
+  "name": "sm-ui-worker",
+  "version": "1.0.0",
+  "description": "Serverless SingBox Matrix UI control plane running on Cloudflare Workers & D1",
+  "main": "src/index.ts",
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev",
+    "build:web": "cd web && npm run build",
+    "build": "npm run build:web",
+    "deploy": "npm run build:web && wrangler deploy",
+    "cf-typegen": "wrangler types"
+  },
+  "keywords": [
+    "sing-box",
+    "cloudflare-workers",
+    "d1",
+    "vless-reality",
+    "hysteria2",
+    "proxy-matrix"
+  ],
+  "author": "AkkunYo <945395054@qq.com>",
+  "license": "MIT",
+  "dependencies": {
+    "@noble/curves": "^1.8.1",
+    "hono": "^4.7.2",
+    "yaml": "^2.7.0"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20250224.0",
+    "typescript": "^5.7.3",
+    "wrangler": "^3.114.0"
+  }
+}
