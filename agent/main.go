@@ -153,6 +153,23 @@ func main() {
 }
 
 func syncWithMaster(cfg Config, currentVer int) int {
+	// Health watchdog: auto-recover sing-box if process exited unexpectedly
+	procMu.Lock()
+	if singBoxCmd == nil {
+		currentPath := filepath.Join(cfg.BaseDir, "configs", "current.json")
+		if _, err := os.Stat(currentPath); err == nil {
+			log.Printf("[Watchdog] sing-box core is stopped, attempting recovery restart...")
+			if err := startSingBoxLocked(cfg.BaseDir, currentPath); err != nil {
+				log.Printf("[Watchdog] Recovery restart failed: %v", err)
+			}
+		}
+	}
+	nodeStatus := "online"
+	if singBoxCmd == nil {
+		nodeStatus = "offline"
+	}
+	procMu.Unlock()
+
 	cpu := readCPUPercent()
 	mem := readMemPercent()
 	uptime := readSystemUptime()
@@ -165,7 +182,7 @@ func syncWithMaster(cfg Config, currentVer int) int {
 
 	reqPayload := SyncRequest{
 		Token:         cfg.NodeToken,
-		Status:        "online",
+		Status:        nodeStatus,
 		RTTMs:         rtt,
 		CPUPercent:    cpu,
 		MemoryPercent: mem,
