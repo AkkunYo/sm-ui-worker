@@ -54,20 +54,6 @@
           />
         </div>
 
-        <div>
-          <label class="block text-xs font-semibold text-slate-300 uppercase tracking-wider mb-1.5">
-            主控主机名 <span class="text-rose-400">* (默认 Master)</span>
-          </label>
-          <input
-            v-model="form.master_name"
-            type="text"
-            required
-            class="w-full px-4 py-2.5 rounded-xl bg-slate-950 border border-slate-800 text-slate-100 placeholder-slate-500 focus:outline-none focus:border-emerald-500 transition text-sm"
-            placeholder="Master"
-          />
-          <p class="text-[11px] text-slate-500 mt-1">在主机列表与订阅中显示为该节点名称（如: <code class="text-emerald-400 font-mono">{{ form.master_name || 'Master' }}-IP</code>）</p>
-        </div>
-
         <div v-if="error" class="p-3 rounded-xl bg-rose-500/10 border border-rose-500/20 text-rose-400 text-xs">
           {{ error }}
         </div>
@@ -100,8 +86,7 @@ const error = ref('')
 const form = reactive({
   username: 'admin',
   password: '',
-  confirm_password: '',
-  master_name: 'Master'
+  confirm_password: ''
 })
 
 async function handleSubmit() {
