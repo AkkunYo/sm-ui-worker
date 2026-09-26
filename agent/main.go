@@ -5,6 +5,7 @@ import (
 	"bufio"
 	"bytes"
 	"compress/gzip"
+	"context"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
@@ -29,6 +30,9 @@ import (
 	"sync"
 	"syscall"
 	"time"
+
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials/insecure"
 )
 
 type Config struct {
@@ -150,6 +154,11 @@ func syncWithMaster(cfg Config, currentVer int) int {
 	cpu := readCPUPercent()
 	mem := readMemPercent()
 	uptime := readSystemUptime()
+	trafficDeltas := queryTrafficDeltas()
+
+	if len(trafficDeltas) > 0 {
+		log.Printf("[Traffic] Captured deltas for %d users from sing-box", len(trafficDeltas))
+	}
 
 	reqPayload := SyncRequest{
 		Token:         cfg.NodeToken,
@@ -159,6 +168,7 @@ func syncWithMaster(cfg Config, currentVer int) int {
 		UptimeSeconds: uptime,
 		CoreVersion:   "v1.14.2",
 		ConfigVersion: currentVer,
+		TrafficDeltas: trafficDeltas,
 	}
 
 	data, err := json.Marshal(reqPayload)
@@ -494,3 +504,219 @@ func readSystemUptime() int64 {
 	}
 	return 0
 }
+
+type rawCodec struct{}
+
+func (rawCodec) Marshal(v any) ([]byte, error) {
+	if b, ok := v.([]byte); ok {
+		return b, nil
+	}
+	return nil, fmt.Errorf("rawCodec: expected []byte, got %T", v)
+}
+
+func (rawCodec) Unmarshal(data []byte, v any) error {
+	if b, ok := v.(*[]byte); ok {
+		*b = make([]byte, len(data))
+		copy(*b, data)
+		return nil
+	}
+	return fmt.Errorf("rawCodec: expected *[]byte, got %T", v)
+}
+
+func (rawCodec) Name() string {
+	return "proto"
+}
+
+func writeVarint(buf *bytes.Buffer, v uint64) {
+	for v >= 0x80 {
+		buf.WriteByte(byte(v) | 0x80)
+		v >>= 7
+	}
+	buf.WriteByte(byte(v))
+}
+
+func readVarint(r *bytes.Reader) (uint64, error) {
+	var v uint64
+	var shift uint
+	for {
+		b, err := r.ReadByte()
+		if err != nil {
+			return 0, err
+		}
+		v |= uint64(b&0x7f) << shift
+		if b < 0x80 {
+			return v, nil
+		}
+		shift += 7
+		if shift >= 64 {
+			return 0, fmt.Errorf("varint overflow")
+		}
+	}
+}
+
+func skipField(r *bytes.Reader, wireType uint64) error {
+	switch wireType {
+	case 0:
+		_, err := readVarint(r)
+		return err
+	case 1:
+		_, err := r.Seek(8, io.SeekCurrent)
+		return err
+	case 2:
+		length, err := readVarint(r)
+		if err != nil {
+			return err
+		}
+		_, err = r.Seek(int64(length), io.SeekCurrent)
+		return err
+	case 5:
+		_, err := r.Seek(4, io.SeekCurrent)
+		return err
+	default:
+		return fmt.Errorf("unknown wire type: %d", wireType)
+	}
+}
+
+func encodeQueryStatsRequest(pattern string, reset bool) []byte {
+	var buf bytes.Buffer
+	if pattern != "" {
+		buf.WriteByte(0x0a)
+		writeVarint(&buf, uint64(len(pattern)))
+		buf.WriteString(pattern)
+	}
+	if reset {
+		buf.WriteByte(0x10)
+		buf.WriteByte(0x01)
+	}
+	return buf.Bytes()
+}
+
+type statItem struct {
+	Name  string
+	Value int64
+}
+
+func decodeQueryStatsResponse(data []byte) ([]statItem, error) {
+	var stats []statItem
+	reader := bytes.NewReader(data)
+	for reader.Len() > 0 {
+		tag, err := readVarint(reader)
+		if err != nil {
+			break
+		}
+		fieldNum := tag >> 3
+		wireType := tag & 0x7
+
+		if fieldNum == 1 && wireType == 2 {
+			length, err := readVarint(reader)
+			if err != nil {
+				break
+			}
+			statBytes := make([]byte, length)
+			if _, err := io.ReadFull(reader, statBytes); err != nil {
+				break
+			}
+			item, err := decodeStat(statBytes)
+			if err == nil {
+				stats = append(stats, item)
+			}
+		} else {
+			if err := skipField(reader, wireType); err != nil {
+				break
+			}
+		}
+	}
+	return stats, nil
+}
+
+func decodeStat(data []byte) (statItem, error) {
+	var item statItem
+	reader := bytes.NewReader(data)
+	for reader.Len() > 0 {
+		tag, err := readVarint(reader)
+		if err != nil {
+			break
+		}
+		fieldNum := tag >> 3
+		wireType := tag & 0x7
+
+		if fieldNum == 1 && wireType == 2 {
+			length, err := readVarint(reader)
+			if err != nil {
+				break
+			}
+			nameBytes := make([]byte, length)
+			if _, err := io.ReadFull(reader, nameBytes); err != nil {
+				break
+			}
+			item.Name = string(nameBytes)
+		} else if fieldNum == 2 && wireType == 0 {
+			val, err := readVarint(reader)
+			if err != nil {
+				break
+			}
+			item.Value = int64(val)
+		} else {
+			if err := skipField(reader, wireType); err != nil {
+				break
+			}
+		}
+	}
+	return item, nil
+}
+
+func queryTrafficDeltas() []TrafficDelta {
+	conn, err := grpc.NewClient("127.0.0.1:8080",
+		grpc.WithTransportCredentials(insecure.NewCredentials()),
+	)
+	if err != nil {
+		return nil
+	}
+	defer conn.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	// Query user stats with reset=true to atomically fetch and reset delta counters
+	reqBytes := encodeQueryStatsRequest("user>>>", true)
+	var respBytes []byte
+
+	err = conn.Invoke(ctx, "/v2ray.core.app.stats.command.StatsService/QueryStats", reqBytes, &respBytes, grpc.ForceCodec(rawCodec{}))
+	if err != nil {
+		return nil
+	}
+
+	stats, err := decodeQueryStatsResponse(respBytes)
+	if err != nil {
+		return nil
+	}
+
+	deltaMap := make(map[string]*TrafficDelta)
+	for _, s := range stats {
+		// Format: "user>>>zkyml>>>traffic>>>uplink"
+		parts := strings.Split(s.Name, ">>>")
+		if len(parts) >= 4 && parts[0] == "user" && parts[2] == "traffic" {
+			uname := parts[1]
+			dir := parts[3]
+			d, exists := deltaMap[uname]
+			if !exists {
+				d = &TrafficDelta{Username: uname}
+				deltaMap[uname] = d
+			}
+			if dir == "uplink" {
+				d.Uplink += s.Value
+			} else if dir == "downlink" {
+				d.Downlink += s.Value
+			}
+		}
+	}
+
+	var result []TrafficDelta
+	for _, d := range deltaMap {
+		if d.Uplink > 0 || d.Downlink > 0 {
+			result = append(result, *d)
+		}
+	}
+	return result
+}
+

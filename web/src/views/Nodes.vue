@@ -153,39 +153,37 @@
               </td>
 
               <!-- 4. Status & Latency -->
-              <td class="px-5 py-3.5">
+              <td class="px-5 py-3.5 whitespace-nowrap">
                 <div class="flex items-center space-x-2">
                   <span
                     v-if="node.status === 'disabled'"
-                    class="px-2 py-0.5 rounded text-[10px] font-semibold bg-slate-800 text-slate-400 border border-slate-700"
+                    class="inline-flex items-center space-x-1.5 text-slate-400 text-xs"
                   >
-                    已停用
+                    <span class="w-2 h-2 rounded-full bg-slate-600"></span>
+                    <span class="text-[11px]">已停用</span>
                   </span>
-                  <span
+                  <div
                     v-else-if="node.status === 'online'"
-                    class="inline-flex items-center space-x-1.5 px-2 py-0.5 rounded text-[10px] font-semibold bg-emerald-500/10 text-emerald-400 border border-emerald-500/20"
+                    class="inline-flex items-center space-x-2"
                   >
-                    <span class="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
-                    <span>已连接</span>
-                  </span>
-                  <span
+                    <span class="relative flex h-2.5 w-2.5">
+                      <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                      <span class="relative inline-flex rounded-full h-2.5 w-2.5 bg-emerald-500"></span>
+                    </span>
+                    <span class="font-mono text-xs font-medium text-emerald-400">
+                      {{ node.rtt_ms || 0 }} ms
+                    </span>
+                  </div>
+                  <div
                     v-else
-                    class="px-2 py-0.5 rounded text-[10px] font-semibold bg-rose-500/10 text-rose-400 border border-rose-500/20"
+                    class="inline-flex items-center space-x-1.5 text-rose-400 text-xs"
                   >
-                    未连接
-                  </span>
-
-                  <span
-                    v-if="node.status === 'online'"
-                    class="font-mono text-[11px] text-slate-400"
-                  >
-                    {{ node.rtt_ms || 0 }} ms
-                  </span>
+                    <span class="w-2 h-2 rounded-full bg-rose-500"></span>
+                    <span class="text-[11px] font-medium">离线</span>
+                  </div>
                 </div>
-                <p class="text-[11px] mt-1" :class="node.core_state === 'running' ? 'text-emerald-400' : 'text-amber-300'">核心：{{ node.core_state === 'running' ? '运行中' : node.core_state === 'stopped' ? '已停止' : node.core_state === 'error' ? '恢复中' : '待确认' }}</p>
-                <p class="text-[11px] mt-1 text-slate-400">配置：{{ node.config_status === 'applied' ? '已生效' : node.config_status === 'failed' ? '失败，将重试' : '等待确认' }}</p>
-                <p v-if="node.core_error" :title="node.core_error" class="text-[11px] text-amber-300 max-w-44 truncate mt-1">{{ node.core_error }}</p>
-                <p v-if="node.last_error" :title="node.last_error" class="text-[11px] text-rose-300 max-w-44 truncate mt-1">{{ node.last_error }}</p>
+                <p v-if="node.core_error" :title="node.core_error" class="text-[11px] text-amber-300 max-w-44 truncate mt-0.5">{{ node.core_error }}</p>
+                <p v-if="node.last_error" :title="node.last_error" class="text-[11px] text-rose-300 max-w-44 truncate mt-0.5">{{ node.last_error }}</p>
               </td>
 
               <!-- 5. CPU -->

@@ -1,57 +1,57 @@
 <template>
-  <div class="p-4 sm:p-8 space-y-8 max-w-7xl mx-auto">
+  <div class="p-4 sm:p-6 space-y-6 max-w-7xl mx-auto">
     <div>
-      <h1 class="text-2xl font-bold tracking-tight text-white">集群全景概览</h1>
-      <p class="text-sm text-slate-400 mt-1">实时监控多节点状态与流量负载指标</p>
+      <h1 class="text-xl sm:text-2xl font-bold tracking-tight text-white">集群全景概览</h1>
+      <p class="text-xs sm:text-sm text-slate-400 mt-0.5">实时监控多节点状态与流量负载指标</p>
     </div>
 
-    <div v-if="overviewError" role="alert" class="rounded-xl border border-rose-500/30 bg-rose-500/10 p-4 text-sm text-rose-300">
+    <div v-if="overviewError" role="alert" class="rounded-xl border border-rose-500/30 bg-rose-500/10 p-3 text-xs sm:text-sm text-rose-300">
       {{ overviewError }}<span v-if="overviewLoaded">，当前展示上次成功获取的数据。</span>
       <button type="button" :disabled="overviewLoading" @click="loadData" class="ml-3 underline disabled:opacity-50">重试</button>
     </div>
     <PageSkeleton v-if="!overviewLoaded && !overviewError" label="正在加载主机概览…" />
     <template v-if="overviewLoaded">
-    <!-- Stat Grid -->
-    <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-      <div class="p-5 rounded-2xl bg-slate-900 border border-slate-800 flex items-center justify-between">
+    <!-- Stat Grid (Compact) -->
+    <div class="grid grid-cols-2 lg:grid-cols-4 gap-3">
+      <div class="p-3.5 px-4 rounded-xl bg-slate-900 border border-slate-800 flex items-center justify-between">
         <div>
-          <p class="text-xs font-semibold text-slate-400 uppercase tracking-wider">主机在线率</p>
-          <p class="text-2xl font-bold text-white mt-1">
+          <p class="text-[11px] font-medium text-slate-400 uppercase tracking-wider">主机在线率</p>
+          <p class="text-lg sm:text-xl font-bold text-white mt-0.5">
             <span class="text-emerald-400">{{ onlineNodesCount }}</span> / {{ enabledNodes.length }}
           </p>
         </div>
-        <div class="w-10 h-10 rounded-xl bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center text-emerald-400">
-          <Server class="w-5 h-5" />
+        <div class="w-8 h-8 rounded-lg bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center text-emerald-400">
+          <Server class="w-4 h-4" />
         </div>
       </div>
 
-      <div class="p-5 rounded-2xl bg-slate-900 border border-slate-800 flex items-center justify-between">
+      <div class="p-3.5 px-4 rounded-xl bg-slate-900 border border-slate-800 flex items-center justify-between">
         <div>
-          <p class="text-xs font-semibold text-slate-400 uppercase tracking-wider">订阅状态</p>
-          <p class="text-2xl font-bold text-white mt-1">{{ subscriptionActive ? '正常' : '不可用' }}</p>
+          <p class="text-[11px] font-medium text-slate-400 uppercase tracking-wider">订阅状态</p>
+          <p class="text-lg sm:text-xl font-bold text-white mt-0.5">{{ subscriptionActive ? '正常' : '不可用' }}</p>
         </div>
-        <div class="w-10 h-10 rounded-xl bg-blue-500/10 border border-blue-500/20 flex items-center justify-center text-blue-400">
-          <Link2 class="w-5 h-5" />
+        <div class="w-8 h-8 rounded-lg bg-blue-500/10 border border-blue-500/20 flex items-center justify-center text-blue-400">
+          <Link2 class="w-4 h-4" />
         </div>
       </div>
 
-      <div class="p-5 rounded-2xl bg-slate-900 border border-slate-800 flex items-center justify-between">
+      <div class="p-3.5 px-4 rounded-xl bg-slate-900 border border-slate-800 flex items-center justify-between">
         <div>
-          <p class="text-xs font-semibold text-slate-400 uppercase tracking-wider">全网总上传</p>
-          <p class="text-2xl font-bold text-white mt-1">{{ formatBytes(totalUpload) }}</p>
+          <p class="text-[11px] font-medium text-slate-400 uppercase tracking-wider">全网总上传</p>
+          <p class="text-lg sm:text-xl font-bold text-white mt-0.5">{{ formatBytes(totalUpload) }}</p>
         </div>
-        <div class="w-10 h-10 rounded-xl bg-purple-500/10 border border-purple-500/20 flex items-center justify-center text-purple-400">
-          <ArrowUpRight class="w-5 h-5" />
+        <div class="w-8 h-8 rounded-lg bg-purple-500/10 border border-purple-500/20 flex items-center justify-center text-purple-400">
+          <ArrowUpRight class="w-4 h-4" />
         </div>
       </div>
 
-      <div class="p-5 rounded-2xl bg-slate-900 border border-slate-800 flex items-center justify-between">
+      <div class="p-3.5 px-4 rounded-xl bg-slate-900 border border-slate-800 flex items-center justify-between">
         <div>
-          <p class="text-xs font-semibold text-slate-400 uppercase tracking-wider">全网总下载</p>
-          <p class="text-2xl font-bold text-white mt-1">{{ formatBytes(totalDownload) }}</p>
+          <p class="text-[11px] font-medium text-slate-400 uppercase tracking-wider">全网总下载</p>
+          <p class="text-lg sm:text-xl font-bold text-white mt-0.5">{{ formatBytes(totalDownload) }}</p>
         </div>
-        <div class="w-10 h-10 rounded-xl bg-amber-500/10 border border-amber-500/20 flex items-center justify-center text-amber-400">
-          <ArrowDownRight class="w-5 h-5" />
+        <div class="w-8 h-8 rounded-lg bg-amber-500/10 border border-amber-500/20 flex items-center justify-center text-amber-400">
+          <ArrowDownRight class="w-4 h-4" />
         </div>
       </div>
     </div>
