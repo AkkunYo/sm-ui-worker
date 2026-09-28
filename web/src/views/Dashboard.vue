@@ -142,7 +142,7 @@
       <div class="flex flex-wrap items-end justify-between gap-3">
         <div>
           <h2 id="traffic-heading" class="text-base font-semibold text-white">流量分布</h2>
-          <p class="mt-1 text-xs text-slate-400">累计代理流量 · 包含上传与下载 · 每 10 秒更新</p>
+          <p class="mt-1 text-xs text-slate-400">累计代理物理流量 · 包含上传与下载 · 每 30 秒更新</p>
         </div>
         <span v-if="traffic && !trafficError" class="text-xs text-slate-400">全网累计 <strong class="ml-1 font-medium text-slate-200 tabular-nums">{{ formatBytes(traffic.total.uplink + traffic.total.downlink) }}</strong></span>
       </div>
@@ -150,16 +150,15 @@
         <span>流量统计暂时不可用{{ traffic ? '，当前展示上次成功获取的数据' : '' }}。</span>
         <button type="button" class="shrink-0 underline underline-offset-4 hover:text-amber-100 disabled:opacity-50" :disabled="trafficLoading" @click="loadTraffic">重试</button>
       </div>
-      <div v-if="!traffic && !trafficError" class="grid grid-cols-1 xl:grid-cols-3 gap-4" role="status" aria-label="正在加载流量分布">
-        <div v-for="title in ['主机对比', '节点类型对比', '用户对比']" :key="title" class="h-80 rounded-2xl border border-slate-800 bg-slate-900 p-6">
+      <div v-if="!traffic && !trafficError" class="grid grid-cols-1 lg:grid-cols-2 gap-5" role="status" aria-label="正在加载流量分布">
+        <div v-for="title in ['主机负载分布', '租户流量使用']" :key="title" class="h-96 rounded-2xl border border-slate-800 bg-slate-900 p-6 space-y-4">
           <h3 class="text-sm font-semibold text-white">{{ title }}</h3>
-          <div class="mx-auto my-8 h-36 w-36 animate-pulse motion-reduce:animate-none rounded-full border-[14px] border-slate-800"></div>
+          <div class="mx-auto my-12 h-40 w-40 animate-pulse motion-reduce:animate-none rounded-full border-[14px] border-slate-800"></div>
         </div>
       </div>
-      <div v-if="traffic" class="grid grid-cols-1 xl:grid-cols-3 gap-4">
-        <TrafficDistribution title="主机对比" subtitle="各主机累计流量及占比" unit="项" :items="traffic.hosts" />
-        <TrafficDistribution title="节点类型对比" subtitle="按代理协议统计流量" unit="类" :items="traffic.protocols" />
-        <TrafficDistribution title="用户对比" subtitle="唯一管理员 · 全部共享订阅流量" unit="位用户" :items="traffic.users" />
+      <div v-if="traffic" class="grid grid-cols-1 lg:grid-cols-2 gap-5">
+        <HostTrafficCard :hosts="traffic.hosts" />
+        <TenantTrafficCard :users="traffic.users" :protocols="traffic.protocols" />
       </div>
     </section>
   </div>
@@ -169,7 +168,8 @@
 import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { Server, Link2, ArrowUpRight, ArrowDownRight } from 'lucide-vue-next'
 import { formatBytes } from '../api'
-import TrafficDistribution from '../components/TrafficDistribution.vue'
+import HostTrafficCard from '../components/HostTrafficCard.vue'
+import TenantTrafficCard from '../components/TenantTrafficCard.vue'
 import PageSkeleton from '../components/PageSkeleton.vue'
 import { usePageRead } from '../composables/usePageRead'
 const readPage = usePageRead()

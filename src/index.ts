@@ -785,38 +785,39 @@ app.get('/api/v1/traffic', authMiddleware, async (c) => {
 
   if (currentUser.role === 'admin') {
     // Only real proxy users, excluding system admin!
-    const users = (await c.env.DB.prepare("SELECT id, username, used_up_bytes, used_down_bytes FROM users WHERE role != 'admin'").all<any>()).results;
+    const users = (await c.env.DB.prepare("SELECT id, username, used_up_bytes, used_down_bytes, traffic_limit_bytes FROM users WHERE role != 'admin'").all<any>()).results;
     const nodes = (await c.env.DB.prepare('SELECT id, name, used_up_bytes, used_down_bytes FROM nodes').all<any>()).results;
 
     let totalUplink = 0;
     let totalDownlink = 0;
-    const userItems = users.map(u => {
-      const up = u.used_up_bytes || 0;
-      const down = u.used_down_bytes || 0;
+    const hostItems = nodes.map(n => {
+      const up = n.used_up_bytes || 0;
+      const down = n.used_down_bytes || 0;
       totalUplink += up;
       totalDownlink += down;
-      return { id: u.id, name: u.username, uplink: up, downlink: down };
+      return { id: n.id, name: n.name, uplink: up, downlink: down };
     });
 
-    const hostItems = nodes.map(n => ({
-      id: n.id,
-      name: n.name,
-      uplink: n.used_up_bytes || 0,
-      downlink: n.used_down_bytes || 0
+    const userItems = users.map(u => ({
+      id: u.id,
+      name: u.username,
+      uplink: u.used_up_bytes || 0,
+      downlink: u.used_down_bytes || 0,
+      traffic_limit_bytes: u.traffic_limit_bytes || 0
     }));
 
     return c.json({
       total: { uplink: totalUplink, downlink: totalDownlink },
       hosts: hostItems,
       protocols: [
-        { id: 'vless', name: 'VLESS-Reality', uplink: Math.floor(totalUplink * 0.1), downlink: Math.floor(totalDownlink * 0.1) },
-        { id: 'hy2', name: 'Hysteria 2', uplink: Math.floor(totalUplink * 0.9), downlink: Math.floor(totalDownlink * 0.9) }
+        { id: 'hy2', name: 'Hysteria 2', uplink: Math.floor(totalUplink * 0.9), downlink: Math.floor(totalDownlink * 0.9) },
+        { id: 'vless', name: 'VLESS-Reality', uplink: Math.floor(totalUplink * 0.1), downlink: Math.floor(totalDownlink * 0.1) }
       ],
       users: userItems
     });
   } else {
     // Tenant only sees their own traffic
-    const user = await c.env.DB.prepare('SELECT id, username, used_up_bytes, used_down_bytes FROM users WHERE id = ?').bind(currentUser.userId).first<any>();
+    const user = await c.env.DB.prepare('SELECT id, username, used_up_bytes, used_down_bytes, traffic_limit_bytes FROM users WHERE id = ?').bind(currentUser.userId).first<any>();
     const nodes = (await c.env.DB.prepare('SELECT id, name, used_up_bytes, used_down_bytes FROM nodes WHERE owner_id = ?').bind(currentUser.userId).all<any>()).results;
 
     const up = user?.used_up_bytes || 0;
@@ -833,10 +834,16 @@ app.get('/api/v1/traffic', authMiddleware, async (c) => {
       total: { uplink: up, downlink: down },
       hosts: hostItems,
       protocols: [
-        { id: 'vless', name: 'VLESS-Reality', uplink: Math.floor(up * 0.1), downlink: Math.floor(down * 0.1) },
-        { id: 'hy2', name: 'Hysteria 2', uplink: Math.floor(up * 0.9), downlink: Math.floor(down * 0.9) }
+        { id: 'hy2', name: 'Hysteria 2', uplink: Math.floor(up * 0.9), downlink: Math.floor(down * 0.9) },
+        { id: 'vless', name: 'VLESS-Reality', uplink: Math.floor(up * 0.1), downlink: Math.floor(down * 0.1) }
       ],
-      users: [{ id: currentUser.userId, name: currentUser.username, uplink: up, downlink: down }]
+      users: [{
+        id: currentUser.userId,
+        name: currentUser.username,
+        uplink: up,
+        downlink: down,
+        traffic_limit_bytes: user?.traffic_limit_bytes || 0
+      }]
     });
   }
 });
