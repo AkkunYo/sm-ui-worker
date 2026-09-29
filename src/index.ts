@@ -3,7 +3,7 @@ import { sign, verify } from 'hono/jwt';
 import { ensureInitialDefaults, getJwtSecret, isSetupCompleted, type Env } from './db';
 import { generateRealityKeyPair, generateToken, generateUUID } from './keys';
 import { loginGuardKeys, getLockRemaining, recordLoginFailure, clearLoginFailures } from './login-guard';
-import { buildServerConfig, isUserActive, type NodeRecord, type InboundTemplateRecord, type UserRecord } from './protocol';
+import { buildServerConfig, isUserActive, type NodeRecord, type InboundTemplateRecord, type NodeInboundSlot, type UserRecord } from './protocol';
 import { buildSubscription } from './subscription';
 
 interface JwtUser {
@@ -136,15 +136,20 @@ app.post('/api/v1/system/setup', async (c) => {
 
   const adminId = res.meta.last_row_id || 1;
 
-  // Create default global inbound template
+  // Create default global inbound templates (VLESS Reality & Hysteria 2)
   const keys = generateRealityKeyPair();
   const shortId = generateToken(16);
   await c.env.DB.prepare(`
     INSERT INTO inbound_templates (
-      owner_id, reality_dest, reality_server_name, reality_private_key, reality_public_key, reality_short_id,
-      hy2_up_mbps, hy2_down_mbps, hy2_masquerade
-    ) VALUES (NULL, 'www.amazon.com:443', 'www.amazon.com', ?, ?, ?, 100, 100, 'https://bing.com')
+      owner_id, name, protocol, reality_dest, reality_server_name, reality_private_key, reality_public_key, reality_short_id, is_default
+    ) VALUES (NULL, '默认 VLESS-Reality', 'vless', 'www.amazon.com:443', 'www.amazon.com', ?, ?, ?, 1)
   `).bind(keys.privateKey, keys.publicKey, shortId).run();
+
+  await c.env.DB.prepare(`
+    INSERT INTO inbound_templates (
+      owner_id, name, protocol, hy2_up_mbps, hy2_down_mbps, hy2_masquerade, is_default
+    ) VALUES (NULL, '默认 Hysteria 2', 'hysteria2', 100, 100, 'https://bing.com', 1)
+  `).run();
 
   // Mark setup completed
   await c.env.DB.prepare("INSERT OR REPLACE INTO system_settings (key, value) VALUES ('setup_completed', 'true')").run();
@@ -329,12 +334,21 @@ app.post('/api/v1/node/sync', async (c) => {
 
   if (clientConfigVersion < globalVersion || node.config_version < globalVersion) {
     const ownerUser = await c.env.DB.prepare('SELECT * FROM users WHERE id = ?').bind(node.owner_id).first<UserRecord>();
-    const template = await c.env.DB.prepare('SELECT * FROM inbound_templates WHERE owner_id = ? OR owner_id IS NULL ORDER BY owner_id DESC LIMIT 1').bind(node.owner_id).first<InboundTemplateRecord>();
+    const slots = (await c.env.DB.prepare(`
+      SELECT ni.id, ni.node_id, ni.template_id, ni.listen_port, ni.hop_ports, ni.enabled,
+             it.name as template_name, it.protocol,
+             it.reality_dest, it.reality_server_name, it.reality_private_key, it.reality_public_key, it.reality_short_id,
+             it.hy2_up_mbps, it.hy2_down_mbps, it.hy2_masquerade
+      FROM node_inbounds ni
+      JOIN inbound_templates it ON ni.template_id = it.id
+      WHERE ni.node_id = ? AND (ni.enabled IS NULL OR ni.enabled = 1)
+      ORDER BY ni.listen_port ASC, ni.id ASC
+    `).bind(node.id).all<NodeInboundSlot>()).results;
 
-    if (ownerUser && template) {
+    if (ownerUser && slots && slots.length > 0) {
       // STRICT ISOLATION: Node only authorizes its genuine owner user!
       const authUsers: UserRecord[] = [ownerUser];
-      const config = buildServerConfig(node, template, authUsers);
+      const config = buildServerConfig(node, slots, authUsers);
       await c.env.DB.prepare('UPDATE nodes SET config_version = ? WHERE id = ?').bind(globalVersion, node.id).run();
       return c.json({
         status: 'ok',
@@ -390,6 +404,22 @@ app.get('/api/v1/nodes', authMiddleware, async (c) => {
     `).bind(currentUser.userId).all<any>()).results;
   }
 
+  const nodeIds = nodes.map(n => n.id);
+  let allInbounds: any[] = [];
+  if (nodeIds.length > 0) {
+    const placeholders = nodeIds.map(() => '?').join(',');
+    allInbounds = (await c.env.DB.prepare(`
+      SELECT ni.id, ni.node_id, ni.template_id, ni.listen_port, ni.hop_ports, ni.enabled,
+             it.name as template_name, it.protocol,
+             it.reality_dest, it.reality_server_name, it.reality_private_key, it.reality_public_key, it.reality_short_id,
+             it.hy2_up_mbps, it.hy2_down_mbps, it.hy2_masquerade
+      FROM node_inbounds ni
+      JOIN inbound_templates it ON ni.template_id = it.id
+      WHERE ni.node_id IN (${placeholders})
+      ORDER BY ni.listen_port ASC, ni.id ASC
+    `).bind(...nodeIds).all<any>()).results;
+  }
+
   const evaluated = nodes.map(n => {
     let currentStatus = n.status;
     if (currentStatus === 'online' && n.last_heartbeat_at) {
@@ -398,8 +428,10 @@ app.get('/api/v1/nodes', authMiddleware, async (c) => {
         currentStatus = 'offline';
       }
     }
+    const nodeSlots = allInbounds.filter(s => s.node_id === n.id);
     return {
       ...n,
+      inbounds: nodeSlots,
       status: currentStatus,
       core_state: currentStatus === 'online' ? 'running' : 'stopped',
       config_status: 'applied',
@@ -425,7 +457,7 @@ app.post('/api/v1/nodes', authMiddleware, async (c) => {
   if (existing) return c.json({ error: '该租户名下主机名称已存在，不得重复' }, 400);
 
   const token = generateUUID();
-  const proxyPort = parseInt(body.proxy_port, 10) || 443;
+  const proxyPort = parseInt(body.proxy_port, 10) || 2096;
   const hopPorts = (body.hop_ports || '').trim();
   const protocol = (body.protocol || 'all').toLowerCase();
   const serverIp = (body.server_ip || '').trim();
@@ -435,6 +467,43 @@ app.post('/api/v1/nodes', authMiddleware, async (c) => {
     VALUES (?, ?, ?, ?, ?, ?, ?, 'offline')
   `).bind(ownerId, name, serverIp, proxyPort, hopPorts, protocol, token).run();
 
+  const nodeId = res.meta.last_row_id;
+
+  // Insert inbound slots
+  if (Array.isArray(body.inbounds) && body.inbounds.length > 0) {
+    for (const slot of body.inbounds) {
+      if (slot.template_id) {
+        await c.env.DB.prepare(`
+          INSERT INTO node_inbounds (node_id, template_id, listen_port, hop_ports, enabled)
+          VALUES (?, ?, ?, ?, ?)
+        `).bind(
+          nodeId,
+          parseInt(slot.template_id, 10),
+          parseInt(slot.listen_port, 10) || proxyPort,
+          (slot.hop_ports || '').trim(),
+          slot.enabled !== undefined ? (slot.enabled ? 1 : 0) : 1
+        ).run();
+      }
+    }
+  } else {
+    // Default: bind default system templates on proxyPort
+    const defaultTemplates = (await c.env.DB.prepare(`
+      SELECT id, protocol FROM inbound_templates WHERE owner_id IS NULL AND is_default = 1
+    `).all<{ id: number; protocol: string }>()).results;
+
+    for (const tmpl of defaultTemplates) {
+      await c.env.DB.prepare(`
+        INSERT INTO node_inbounds (node_id, template_id, listen_port, hop_ports, enabled)
+        VALUES (?, ?, ?, ?, 1)
+      `).bind(
+        nodeId,
+        tmpl.id,
+        proxyPort,
+        tmpl.protocol === 'hysteria2' ? hopPorts : ''
+      ).run();
+    }
+  }
+
   await bumpConfigVersion(c.env.DB);
 
   const host = c.req.header('host') || 'worker.dev';
@@ -442,7 +511,7 @@ app.post('/api/v1/nodes', authMiddleware, async (c) => {
   const masterUrl = `${proto}://${host}`;
 
   return c.json({
-    id: res.meta.last_row_id,
+    id: nodeId,
     owner_id: ownerId,
     name,
     server_ip: serverIp,
@@ -479,6 +548,25 @@ app.put('/api/v1/nodes/:id', authMiddleware, async (c) => {
   await c.env.DB.prepare(`
     UPDATE nodes SET owner_id = ?, name = ?, server_ip = ?, proxy_port = ?, hop_ports = ?, protocol = ?, status = ? WHERE id = ?
   `).bind(ownerId, name, serverIp, proxyPort, hopPorts, protocol, status, id).run();
+
+  // If inbounds slots provided, update them
+  if (Array.isArray(body.inbounds)) {
+    await c.env.DB.prepare('DELETE FROM node_inbounds WHERE node_id = ?').bind(id).run();
+    for (const slot of body.inbounds) {
+      if (slot.template_id) {
+        await c.env.DB.prepare(`
+          INSERT INTO node_inbounds (node_id, template_id, listen_port, hop_ports, enabled)
+          VALUES (?, ?, ?, ?, ?)
+        `).bind(
+          id,
+          parseInt(slot.template_id, 10),
+          parseInt(slot.listen_port, 10) || proxyPort,
+          (slot.hop_ports || '').trim(),
+          slot.enabled !== undefined ? (slot.enabled ? 1 : 0) : 1
+        ).run();
+      }
+    }
+  }
 
   await bumpConfigVersion(c.env.DB);
   return c.json({ success: true });
@@ -602,66 +690,158 @@ app.delete('/api/v1/users/:id', authMiddleware, adminOnly, async (c) => {
 });
 
 // ==========================================
-// 5. Inbound Template (Web API)
+// 5. Inbound Templates (Template Pool Web API)
 // ==========================================
 
-app.get('/api/v1/template', authMiddleware, async (c) => {
+app.get('/api/v1/templates', authMiddleware, async (c) => {
   const currentUser = c.get('user') as JwtUser;
-  const template = await c.env.DB.prepare('SELECT * FROM inbound_templates WHERE owner_id = ? OR owner_id IS NULL ORDER BY owner_id DESC LIMIT 1').bind(currentUser.userId).first<any>();
-  return c.json(template);
+  let templates: any[] = [];
+  if (currentUser.role === 'admin') {
+    templates = (await c.env.DB.prepare(`
+      SELECT t.*, u.username as owner_username
+      FROM inbound_templates t
+      LEFT JOIN users u ON t.owner_id = u.id
+      ORDER BY t.owner_id ASC, t.protocol ASC, t.id ASC
+    `).all<any>()).results;
+  } else {
+    templates = (await c.env.DB.prepare(`
+      SELECT t.*
+      FROM inbound_templates t
+      WHERE t.owner_id IS NULL OR t.owner_id = ?
+      ORDER BY t.owner_id ASC, t.protocol ASC, t.id ASC
+    `).bind(currentUser.userId).all<any>()).results;
+  }
+  return c.json(templates);
 });
 
-app.put('/api/v1/template', authMiddleware, async (c) => {
+app.post('/api/v1/templates', authMiddleware, async (c) => {
   const currentUser = c.get('user') as JwtUser;
   const body = await c.req.json();
+  const name = (body.name || '').trim();
+  const protocol = (body.protocol || '').toLowerCase();
 
-  const existing = await c.env.DB.prepare('SELECT id FROM inbound_templates WHERE owner_id = ?').bind(currentUser.userId).first<any>();
-
-  if (existing) {
-    await c.env.DB.prepare(`
-      UPDATE inbound_templates SET
-        reality_dest = ?,
-        reality_server_name = ?,
-        reality_private_key = ?,
-        reality_public_key = ?,
-        reality_short_id = ?,
-        hy2_up_mbps = ?,
-        hy2_down_mbps = ?,
-        hy2_masquerade = ?,
-        updated_at = datetime('now')
-      WHERE id = ?
-    `).bind(
-      body.reality_dest,
-      body.reality_server_name,
-      body.reality_private_key,
-      body.reality_public_key,
-      body.reality_short_id,
-      body.hy2_up_mbps || 100,
-      body.hy2_down_mbps || 100,
-      body.hy2_masquerade || 'https://bing.com',
-      existing.id
-    ).run();
-  } else {
-    await c.env.DB.prepare(`
-      INSERT INTO inbound_templates (
-        owner_id, reality_dest, reality_server_name, reality_private_key, reality_public_key, reality_short_id,
-        hy2_up_mbps, hy2_down_mbps, hy2_masquerade
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).bind(
-      currentUser.userId,
-      body.reality_dest,
-      body.reality_server_name,
-      body.reality_private_key,
-      body.reality_public_key,
-      body.reality_short_id,
-      body.hy2_up_mbps || 100,
-      body.hy2_down_mbps || 100,
-      body.hy2_masquerade || 'https://bing.com'
-    ).run();
+  if (!name) return c.json({ error: '模板名称不能为空' }, 400);
+  if (protocol !== 'vless' && protocol !== 'hysteria2') {
+    return c.json({ error: '协议类型必须为 vless 或 hysteria2' }, 400);
   }
+
+  let ownerId: number | null = currentUser.userId;
+  if (currentUser.role === 'admin' && body.is_system) {
+    ownerId = null;
+  }
+
+  const isDefault = body.is_default ? 1 : 0;
+  let realityDest = body.reality_dest || 'www.amazon.com:443';
+  let realityServerName = body.reality_server_name || 'www.amazon.com';
+  let realityPrivateKey = body.reality_private_key || null;
+  let realityPublicKey = body.reality_public_key || null;
+  let realityShortId = body.reality_short_id || null;
+
+  if (protocol === 'vless' && (!realityPrivateKey || !realityPublicKey)) {
+    const keys = generateRealityKeyPair();
+    realityPrivateKey = keys.privateKey;
+    realityPublicKey = keys.publicKey;
+    if (!realityShortId) realityShortId = generateToken(16);
+  }
+
+  const hy2UpMbps = parseInt(body.hy2_up_mbps, 10) || 100;
+  const hy2DownMbps = parseInt(body.hy2_down_mbps, 10) || 100;
+  const hy2Masquerade = body.hy2_masquerade || 'https://bing.com';
+
+  const res = await c.env.DB.prepare(`
+    INSERT INTO inbound_templates (
+      owner_id, name, protocol, reality_dest, reality_server_name,
+      reality_private_key, reality_public_key, reality_short_id,
+      hy2_up_mbps, hy2_down_mbps, hy2_masquerade, is_default
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).bind(
+    ownerId, name, protocol, realityDest, realityServerName,
+    realityPrivateKey, realityPublicKey, realityShortId,
+    hy2UpMbps, hy2DownMbps, hy2Masquerade, isDefault
+  ).run();
+
+  await bumpConfigVersion(c.env.DB);
+  return c.json({ id: res.meta.last_row_id, success: true }, 201);
+});
+
+app.put('/api/v1/templates/:id', authMiddleware, async (c) => {
+  const currentUser = c.get('user') as JwtUser;
+  const id = parseInt(c.req.param('id') || '0', 10);
+  const body = await c.req.json();
+
+  const template = await c.env.DB.prepare('SELECT * FROM inbound_templates WHERE id = ?').bind(id).first<any>();
+  if (!template) return c.json({ error: '模板不存在' }, 404);
+
+  if (template.owner_id === null && currentUser.role !== 'admin') {
+    return c.json({ error: '无权修改系统级公共模板' }, 403);
+  }
+  if (template.owner_id !== null && template.owner_id !== currentUser.userId && currentUser.role !== 'admin') {
+    return c.json({ error: '无权修改其他租户的私有模板' }, 403);
+  }
+
+  const name = body.name ? body.name.trim() : template.name;
+  const isDefault = body.is_default !== undefined ? (body.is_default ? 1 : 0) : template.is_default;
+  const realityDest = body.reality_dest !== undefined ? body.reality_dest : template.reality_dest;
+  const realityServerName = body.reality_server_name !== undefined ? body.reality_server_name : template.reality_server_name;
+  const realityPrivateKey = body.reality_private_key !== undefined ? body.reality_private_key : template.reality_private_key;
+  const realityPublicKey = body.reality_public_key !== undefined ? body.reality_public_key : template.reality_public_key;
+  const realityShortId = body.reality_short_id !== undefined ? body.reality_short_id : template.reality_short_id;
+  const hy2UpMbps = body.hy2_up_mbps !== undefined ? parseInt(body.hy2_up_mbps, 10) : template.hy2_up_mbps;
+  const hy2DownMbps = body.hy2_down_mbps !== undefined ? parseInt(body.hy2_down_mbps, 10) : template.hy2_down_mbps;
+  const hy2Masquerade = body.hy2_masquerade !== undefined ? body.hy2_masquerade : template.hy2_masquerade;
+
+  await c.env.DB.prepare(`
+    UPDATE inbound_templates SET
+      name = ?,
+      reality_dest = ?,
+      reality_server_name = ?,
+      reality_private_key = ?,
+      reality_public_key = ?,
+      reality_short_id = ?,
+      hy2_up_mbps = ?,
+      hy2_down_mbps = ?,
+      hy2_masquerade = ?,
+      is_default = ?,
+      updated_at = datetime('now')
+    WHERE id = ?
+  `).bind(
+    name, realityDest, realityServerName, realityPrivateKey, realityPublicKey, realityShortId,
+    hy2UpMbps, hy2DownMbps, hy2Masquerade, isDefault, id
+  ).run();
 
   await bumpConfigVersion(c.env.DB);
   return c.json({ success: true });
+});
+
+app.delete('/api/v1/templates/:id', authMiddleware, async (c) => {
+  const currentUser = c.get('user') as JwtUser;
+  const id = parseInt(c.req.param('id') || '0', 10);
+
+  const template = await c.env.DB.prepare('SELECT * FROM inbound_templates WHERE id = ?').bind(id).first<any>();
+  if (!template) return c.json({ error: '模板不存在' }, 404);
+
+  if (template.owner_id === null && currentUser.role !== 'admin') {
+    return c.json({ error: '无权删除系统级公共模板' }, 403);
+  }
+  if (template.owner_id !== null && template.owner_id !== currentUser.userId && currentUser.role !== 'admin') {
+    return c.json({ error: '无权删除其他租户的私有模板' }, 403);
+  }
+
+  const used = await c.env.DB.prepare('SELECT COUNT(*) as count FROM node_inbounds WHERE template_id = ?').bind(id).first<{ count: number }>();
+  if ((used?.count || 0) > 0) {
+    return c.json({ error: `该模板正被 ${used!.count} 个主机插槽使用，请先从主机解绑再删除` }, 400);
+  }
+
+  await c.env.DB.prepare('DELETE FROM inbound_templates WHERE id = ?').bind(id).run();
+  await bumpConfigVersion(c.env.DB);
+  return c.json({ success: true });
+});
+
+// Backward-compatible single template query
+app.get('/api/v1/template', authMiddleware, async (c) => {
+  const currentUser = c.get('user') as JwtUser;
+  const template = await c.env.DB.prepare('SELECT * FROM inbound_templates WHERE owner_id = ? OR owner_id IS NULL ORDER BY owner_id DESC, id ASC LIMIT 1').bind(currentUser.userId).first<any>();
+  return c.json(template || {});
 });
 
 app.get('/api/v1/template/generate-keys', authMiddleware, async (c) => {
@@ -711,60 +891,68 @@ app.get('/api/v1/subscription', authMiddleware, async (c) => {
     nodes = (await c.env.DB.prepare("SELECT * FROM nodes WHERE owner_id = ? AND status != 'disabled'").bind(user.id).all<any>()).results;
   }
 
-  const template = await c.env.DB.prepare('SELECT * FROM inbound_templates WHERE owner_id = ? OR owner_id IS NULL ORDER BY owner_id DESC LIMIT 1').bind(user.id).first<any>();
+  const nodeIds = nodes.map(n => n.id);
+  let allInbounds: any[] = [];
+  if (nodeIds.length > 0) {
+    const placeholders = nodeIds.map(() => '?').join(',');
+    allInbounds = (await c.env.DB.prepare(`
+      SELECT ni.id, ni.node_id, ni.template_id, ni.listen_port, ni.hop_ports, ni.enabled,
+             it.name as template_name, it.protocol,
+             it.reality_dest, it.reality_server_name, it.reality_private_key, it.reality_public_key, it.reality_short_id,
+             it.hy2_up_mbps, it.hy2_down_mbps, it.hy2_masquerade
+      FROM node_inbounds ni
+      JOIN inbound_templates it ON ni.template_id = it.id
+      WHERE ni.node_id IN (${placeholders}) AND (ni.enabled IS NULL OR ni.enabled = 1)
+      ORDER BY ni.listen_port ASC, ni.id ASC
+    `).bind(...nodeIds).all<any>()).results;
+  }
 
   const links: Array<{ name: string; protocol: string; uri: string }> = [];
-  if (template && nodes.length > 0) {
-    for (const node of nodes) {
-      if (!node.server_ip) continue;
-      const ips = node.server_ip.split(',').map((s: string) => s.trim()).filter(Boolean);
-      const targetIP = ips[0] || '';
-      if (!targetIP) continue;
+  for (const node of nodes) {
+    if (!node.server_ip) continue;
+    const ips = node.server_ip.split(',').map((s: string) => s.trim()).filter(Boolean);
+    const targetIP = ips[0] || '';
+    if (!targetIP) continue;
 
-      const suffix = isAllMode && node.owner_username ? ` [${node.owner_username}]` : '';
-      const proto = (node.protocol || 'all').toLowerCase();
-      const nodeUuid = (isAllMode && node.owner_uuid) ? node.owner_uuid : user.uuid;
-      const nodePassword = (isAllMode && node.owner_proxy_password) ? node.owner_proxy_password : (user.proxy_password || 'sm-ui-password');
+    const suffix = isAllMode && node.owner_username ? ` [${node.owner_username}]` : '';
+    const nodeUuid = (isAllMode && node.owner_uuid) ? node.owner_uuid : user.uuid;
+    const nodePassword = (isAllMode && node.owner_proxy_password) ? node.owner_proxy_password : (user.proxy_password || 'sm-ui-password');
 
-      // VLESS Reality
-      if (proto === 'all' || proto === 'vless') {
-        const vlessName = `${node.name}-VLESS-${targetIP}${suffix}`;
+    const slots = allInbounds.filter(s => s.node_id === node.id);
+    for (const slot of slots) {
+      if (slot.protocol === 'vless') {
+        const vlessName = `${node.name}-VLESS-${targetIP}:${slot.listen_port}${suffix}`;
         const remark = encodeURIComponent(vlessName);
-        const vlessURI = `vless://${nodeUuid}@${targetIP}:${node.proxy_port}?encryption=none&flow=xtls-rprx-vision&security=reality&sni=${encodeURIComponent(template.reality_server_name)}&fp=chrome&pbk=${encodeURIComponent(template.reality_public_key)}&sid=${encodeURIComponent(template.reality_short_id || '0123456789abcdef')}&type=tcp&headerType=none#${remark}`;
+        const vlessURI = `vless://${nodeUuid}@${targetIP}:${slot.listen_port}?encryption=none&flow=xtls-rprx-vision&security=reality&sni=${encodeURIComponent(slot.reality_server_name || 'www.amazon.com')}&fp=chrome&pbk=${encodeURIComponent(slot.reality_public_key || '')}&sid=${encodeURIComponent(slot.reality_short_id || '0123456789abcdef')}&type=tcp&headerType=none#${remark}`;
         links.push({
           name: vlessName,
           protocol: 'vless',
           uri: vlessURI
         });
-      }
-
-      // Hysteria 2
-      if (proto === 'all' || proto === 'hysteria2') {
-        const hy2Name = `${node.name}-Hy2-${targetIP}${suffix}`;
+      } else if (slot.protocol === 'hysteria2') {
+        const hy2Name = `${node.name}-Hy2-${targetIP}:${slot.listen_port}${suffix}`;
         const remark = encodeURIComponent(hy2Name);
-        const hy2Password = nodePassword;
-        let hy2Sni = template.reality_server_name || targetIP;
-        if (template.hy2_masquerade) {
+        let hy2Sni = slot.reality_server_name || targetIP;
+        if (slot.hy2_masquerade) {
           try {
-            const u = new URL(template.hy2_masquerade.startsWith('http') ? template.hy2_masquerade : `https://${template.hy2_masquerade}`);
+            const u = new URL(slot.hy2_masquerade.startsWith('http') ? slot.hy2_masquerade : `https://${slot.hy2_masquerade}`);
             if (u.hostname) hy2Sni = u.hostname;
           } catch {}
         }
-        const upMbps = template.hy2_up_mbps || 100;
-        const downMbps = template.hy2_down_mbps || 100;
-        const hy2URI = `hysteria2://${encodeURIComponent(hy2Password)}@${targetIP}:${node.proxy_port}?alpn=h3&insecure=1&allowInsecure=1&sni=${encodeURIComponent(hy2Sni)}&upmbps=${upMbps}&downmbps=${downMbps}#${remark}`;
+        const upMbps = slot.hy2_up_mbps || 100;
+        const downMbps = slot.hy2_down_mbps || 100;
+        const hy2URI = `hysteria2://${encodeURIComponent(nodePassword)}@${targetIP}:${slot.listen_port}?alpn=h3&insecure=1&allowInsecure=1&sni=${encodeURIComponent(hy2Sni)}&upmbps=${upMbps}&downmbps=${downMbps}#${remark}`;
         links.push({
           name: hy2Name,
           protocol: 'hy2',
           uri: hy2URI
         });
 
-        // Hysteria 2 Port Hopping URI
-        if (node.hop_ports && node.hop_ports.trim()) {
+        if (slot.hop_ports && slot.hop_ports.trim()) {
           const hopName = `${node.name}-Hy2-Hop-${targetIP}${suffix}`;
           const hopRemark = encodeURIComponent(hopName);
-          const hopPortRange = node.hop_ports.trim();
-          const hopURI = `hysteria2://${encodeURIComponent(hy2Password)}@${targetIP}:${hopPortRange}?alpn=h3&insecure=1&allowInsecure=1&mport=${encodeURIComponent(hopPortRange)}&sni=${encodeURIComponent(hy2Sni)}&upmbps=${upMbps}&downmbps=${downMbps}#${hopRemark}`;
+          const hopPortRange = slot.hop_ports.trim();
+          const hopURI = `hysteria2://${encodeURIComponent(nodePassword)}@${targetIP}:${hopPortRange}?alpn=h3&insecure=1&allowInsecure=1&mport=${encodeURIComponent(hopPortRange)}&sni=${encodeURIComponent(hy2Sni)}&upmbps=${upMbps}&downmbps=${downMbps}#${hopRemark}`;
           links.push({
             name: hopName,
             protocol: 'hy2',
@@ -904,20 +1092,32 @@ async function handleSubscription(c: AppContext, usernameParam?: string, tokenPa
     nodes = (await c.env.DB.prepare("SELECT * FROM nodes WHERE owner_id = ? AND status = 'online'").bind(user.id).all<NodeRecord>()).results;
   }
 
-  const template = await c.env.DB.prepare('SELECT * FROM inbound_templates WHERE owner_id = ? OR owner_id IS NULL ORDER BY owner_id DESC LIMIT 1').bind(user.id).first<InboundTemplateRecord>();
-  if (!template) {
-    return c.text('Template not configured', 500);
+  const nodeIds = nodes.map(n => n.id);
+  let allInbounds: any[] = [];
+  if (nodeIds.length > 0) {
+    const placeholders = nodeIds.map(() => '?').join(',');
+    allInbounds = (await c.env.DB.prepare(`
+      SELECT ni.id, ni.node_id, ni.template_id, ni.listen_port, ni.hop_ports, ni.enabled,
+             it.name as template_name, it.protocol,
+             it.reality_dest, it.reality_server_name, it.reality_private_key, it.reality_public_key, it.reality_short_id,
+             it.hy2_up_mbps, it.hy2_down_mbps, it.hy2_masquerade
+      FROM node_inbounds ni
+      JOIN inbound_templates it ON ni.template_id = it.id
+      WHERE ni.node_id IN (${placeholders}) AND (ni.enabled IS NULL OR ni.enabled = 1)
+      ORDER BY ni.listen_port ASC, ni.id ASC
+    `).bind(...nodeIds).all<any>()).results;
   }
 
   const mappedNodes = nodes.map(n => ({
     ...n,
     owner_username: isAllMode ? (n as any).owner_username : undefined,
     owner_uuid: isAllMode ? (n as any).owner_uuid : undefined,
-    owner_proxy_password: isAllMode ? (n as any).owner_proxy_password : undefined
+    owner_proxy_password: isAllMode ? (n as any).owner_proxy_password : undefined,
+    inbounds: allInbounds.filter(s => s.node_id === n.id)
   }));
 
   const userAgent = c.req.header('User-Agent') || '';
-  const sub = buildSubscription(user, mappedNodes, template, userAgent);
+  const sub = buildSubscription(user, mappedNodes, userAgent);
 
   for (const [k, v] of Object.entries(sub.headers)) {
     c.header(k, v);

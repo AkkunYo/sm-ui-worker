@@ -51,16 +51,31 @@ CREATE TABLE IF NOT EXISTS nodes (
 CREATE TABLE IF NOT EXISTS inbound_templates (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   owner_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
-  reality_dest TEXT DEFAULT 'www.amazon.com:443',
-  reality_server_name TEXT DEFAULT 'www.amazon.com',
-  reality_private_key TEXT NOT NULL,
-  reality_public_key TEXT NOT NULL,
-  reality_short_id TEXT DEFAULT '0123456789abcdef',
+  name TEXT NOT NULL,
+  protocol TEXT NOT NULL, -- 'vless' | 'hysteria2'
+  reality_dest TEXT,
+  reality_server_name TEXT,
+  reality_private_key TEXT,
+  reality_public_key TEXT,
+  reality_short_id TEXT,
   hy2_up_mbps INTEGER DEFAULT 100,
   hy2_down_mbps INTEGER DEFAULT 100,
   hy2_masquerade TEXT DEFAULT 'https://bing.com',
+  is_default INTEGER DEFAULT 0,
   created_at TEXT DEFAULT (datetime('now')),
   updated_at TEXT DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS node_inbounds (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  node_id INTEGER NOT NULL REFERENCES nodes(id) ON DELETE CASCADE,
+  template_id INTEGER NOT NULL REFERENCES inbound_templates(id) ON DELETE RESTRICT,
+  listen_port INTEGER NOT NULL DEFAULT 2096,
+  hop_ports TEXT DEFAULT '',
+  enabled INTEGER DEFAULT 1,
+  created_at TEXT DEFAULT (datetime('now')),
+  updated_at TEXT DEFAULT (datetime('now')),
+  UNIQUE(node_id, template_id, listen_port)
 );
 
 CREATE TABLE IF NOT EXISTS login_attempts (
