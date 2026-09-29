@@ -61,8 +61,8 @@
       </div>
     </div>
 
-    <!-- Protocol Breakdown Section -->
-    <div class="border-t border-slate-800/80 pt-5 space-y-3">
+    <!-- Protocol Breakdown Section (Displayed only when real protocol telemetry is present) -->
+    <div v-if="protocols && protocols.length > 0" class="border-t border-slate-800/80 pt-5 space-y-3">
       <div class="flex items-center justify-between text-xs">
         <span class="font-medium text-slate-300 flex items-center gap-1.5">
           <span>⚡ 协议分流概览</span>
