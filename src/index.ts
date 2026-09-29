@@ -1,8 +1,8 @@
-import { Hono } from 'hono';
-import { cors } from 'hono/cors';
+import { Hono, type Context } from 'hono';
 import { sign, verify } from 'hono/jwt';
 import { ensureInitialDefaults, getJwtSecret, isSetupCompleted, type Env } from './db';
 import { generateRealityKeyPair, generateToken, generateUUID } from './keys';
+import { loginGuardKeys, getLockRemaining, recordLoginFailure, clearLoginFailures } from './login-guard';
 import { buildServerConfig, isUserActive, type NodeRecord, type InboundTemplateRecord, type UserRecord } from './protocol';
 import { buildSubscription } from './subscription';
 
@@ -12,9 +12,9 @@ interface JwtUser {
   role: 'admin' | 'user';
 }
 
-const app = new Hono<{ Bindings: Env; Variables: { user: JwtUser } }>();
+type AppContext = Context<{ Bindings: Env; Variables: { user: JwtUser } }>;
 
-app.use('*', cors());
+const app = new Hono<{ Bindings: Env; Variables: { user: JwtUser } }>();
 
 // Initialize defaults only on API routes (static assets bypass DB)
 app.use('/api/*', async (c, next) => {
@@ -23,6 +23,9 @@ app.use('/api/*', async (c, next) => {
 });
 
 // Password helpers (PBKDF2 Web Crypto)
+const STORED_HASH_RE = /^[0-9a-f]{32}:[0-9a-f]{64}$/i;
+const DUMMY_PASSWORD_HASH = `${'0'.repeat(32)}:${'0'.repeat(64)}`;
+
 async function hashPassword(password: string): Promise<string> {
   const enc = new TextEncoder();
   const salt = crypto.getRandomValues(new Uint8Array(16));
@@ -37,12 +40,13 @@ async function hashPassword(password: string): Promise<string> {
 }
 
 async function verifyPassword(password: string, storedHash: string): Promise<boolean> {
-  if (!storedHash || !storedHash.includes(':')) {
-    return password === storedHash;
+  if (!STORED_HASH_RE.test(storedHash || '')) {
+    return false;
   }
   const [saltHex, hashHex] = storedHash.split(':');
-  const fromHex = (hex: string) => new Uint8Array(hex.match(/.{1,2}/g)!.map(byte => parseInt(byte, 16)));
+  const fromHex = (hex: string) => new Uint8Array(hex.match(/.{2}/g)!.map(byte => parseInt(byte, 16)));
   const salt = fromHex(saltHex);
+  const expected = fromHex(hashHex);
   const enc = new TextEncoder();
   const keyMaterial = await crypto.subtle.importKey('raw', enc.encode(password), 'PBKDF2', false, ['deriveBits']);
   const derived = await crypto.subtle.deriveBits(
@@ -50,8 +54,7 @@ async function verifyPassword(password: string, storedHash: string): Promise<boo
     keyMaterial,
     256
   );
-  const toHex = (b: Uint8Array) => Array.from(b).map(x => x.toString(16).padStart(2, '0')).join('');
-  return toHex(new Uint8Array(derived)) === hashHex;
+  return crypto.subtle.timingSafeEqual(new Uint8Array(derived), expected);
 }
 
 // Global config version helper
@@ -68,8 +71,8 @@ async function getConfigVersion(db: D1Database): Promise<number> {
   return row ? parseInt(row.value, 10) || 1 : 1;
 }
 
-// JWT Auth Middleware
-const authMiddleware = async (c: any, next: any) => {
+// JWT Auth Middleware with live DB status check
+const authMiddleware = async (c: AppContext, next: any) => {
   const authHeader = c.req.header('Authorization');
   if (!authHeader || !authHeader.startsWith('Bearer ')) {
     return c.json({ error: 'Unauthorized' }, 401);
@@ -77,15 +80,19 @@ const authMiddleware = async (c: any, next: any) => {
   const token = authHeader.substring(7);
   const secret = await getJwtSecret(c.env.DB);
   try {
-    const payload = await verify(token, secret, "HS256");
-    c.set('user', payload as JwtUser);
+    const payload = (await verify(token, secret, "HS256")) as unknown as JwtUser;
+    const liveUser = await c.env.DB.prepare('SELECT id, username, role, status FROM users WHERE id = ?').bind(payload.userId).first<any>();
+    if (!liveUser || liveUser.status !== 1) {
+      return c.json({ error: '用户不存在或已被禁用' }, 401);
+    }
+    c.set('user', { userId: liveUser.id, username: liveUser.username, role: liveUser.role });
     await next();
   } catch (e) {
     return c.json({ error: 'Invalid or expired token' }, 401);
   }
 };
 
-const adminOnly = async (c: any, next: any) => {
+const adminOnly = async (c: AppContext, next: any) => {
   const user = c.get('user') as JwtUser;
   if (user?.role !== 'admin') {
     return c.json({ error: 'Forbidden: 管理员专属操作' }, 403);
@@ -153,19 +160,32 @@ app.post('/api/v1/system/setup', async (c) => {
 });
 
 app.post('/api/v1/auth/login', async (c) => {
-  const body = await c.req.json();
-  const username = (body.username || '').trim();
-  const password = body.password || '';
+  const body = await c.req.json().catch(() => null);
+  const username = typeof body?.username === 'string' ? body.username.trim() : '';
+  const password = typeof body?.password === 'string' ? body.password : '';
+
+  if (!username || !password) {
+    return c.json({ error: '请输入用户名和密码' }, 400);
+  }
+
+  const clientIp = c.req.header('cf-connecting-ip') || '';
+  const guardKeys = loginGuardKeys(clientIp, username);
+  const remainingSeconds = await getLockRemaining(c.env.DB, guardKeys);
+  if (remainingSeconds > 0) {
+    c.header('Retry-After', String(remainingSeconds));
+    return c.json({ error: `尝试次数过多，请 ${Math.ceil(remainingSeconds / 60)} 分钟后再试` }, 429);
+  }
 
   const user = await c.env.DB.prepare('SELECT * FROM users WHERE username = ?').bind(username).first<any>();
-  if (!user || user.status !== 1) {
+  // Run PBKDF2 unconditionally to mitigate timing enumeration
+  const valid = await verifyPassword(password, user?.password_hash || DUMMY_PASSWORD_HASH);
+  if (!user || user.status !== 1 || !valid) {
+    await recordLoginFailure(c.env.DB, guardKeys);
     return c.json({ error: '用户名或密码错误' }, 401);
   }
 
-  const valid = await verifyPassword(password, user.password_hash);
-  if (!valid) {
-    return c.json({ error: '用户名或密码错误' }, 401);
-  }
+  // Clear username-specific lockout records on successful authentication
+  await clearLoginFailures(c.env.DB, guardKeys.filter(k => k.key.startsWith('user:')));
 
   const secret = await getJwtSecret(c.env.DB);
   const token = await sign({ userId: user.id, username: user.username, role: user.role, exp: Math.floor(Date.now() / 1000) + 86400 * 7 }, secret, "HS256");
@@ -254,32 +274,41 @@ app.post('/api/v1/node/sync', async (c) => {
     node.id
   ).run();
 
-  // Process traffic reporting deltas: attribute to user by username and accumulate node traffic!
+  // Process traffic reporting deltas: enforce non-negative integers and strict tenant scope
   let nodeDeltaUp = 0;
   let nodeDeltaDown = 0;
   if (Array.isArray(body.traffic_deltas)) {
+    const nodeOwner = await c.env.DB.prepare('SELECT id, username FROM users WHERE id = ?').bind(node.owner_id).first<{ id: number; username: string }>();
+    const MAX_DELTA_BYTES = 500 * 1024 * 1024 * 1024; // 500 GB ceiling per 30s heartbeat
+
     for (const d of body.traffic_deltas) {
-      const up = d.uplink || 0;
-      const down = d.downlink || 0;
-      if ((up > 0 || down > 0) && d.username) {
-        nodeDeltaUp += up;
-        nodeDeltaDown += down;
-        const res = await c.env.DB.prepare(`
+      const up = Number(d?.uplink);
+      const down = Number(d?.downlink);
+
+      // Validate integers, non-negative, and sane upper limit
+      if (!Number.isSafeInteger(up) || !Number.isSafeInteger(down) || up < 0 || down < 0 || up > MAX_DELTA_BYTES || down > MAX_DELTA_BYTES) {
+        continue;
+      }
+      if (up === 0 && down === 0) {
+        continue;
+      }
+
+      // Enforce tenant boundary: node can only report for its owner
+      const targetUsername = typeof d?.username === 'string' ? d.username.trim() : '';
+      if (nodeOwner && targetUsername && targetUsername !== nodeOwner.username) {
+        continue;
+      }
+
+      nodeDeltaUp += up;
+      nodeDeltaDown += down;
+
+      if (nodeOwner) {
+        await c.env.DB.prepare(`
           UPDATE users SET
             used_up_bytes = used_up_bytes + ?,
             used_down_bytes = used_down_bytes + ?
-          WHERE username = ?
-        `).bind(up, down, d.username).run();
-
-        // If user not found by username, fallback to node owner
-        if (!res.meta || res.meta.changes === 0) {
-          await c.env.DB.prepare(`
-            UPDATE users SET
-              used_up_bytes = used_up_bytes + ?,
-              used_down_bytes = used_down_bytes + ?
-            WHERE id = ?
-          `).bind(up, down, node.owner_id).run();
-        }
+          WHERE id = ?
+        `).bind(up, down, nodeOwner.id).run();
       }
     }
   }
@@ -428,7 +457,7 @@ app.post('/api/v1/nodes', authMiddleware, async (c) => {
 
 app.put('/api/v1/nodes/:id', authMiddleware, async (c) => {
   const currentUser = c.get('user') as JwtUser;
-  const id = parseInt(c.req.param('id'), 10);
+  const id = parseInt(c.req.param('id') || '0', 10);
   const body = await c.req.json();
 
   let node: any = null;
@@ -457,7 +486,7 @@ app.put('/api/v1/nodes/:id', authMiddleware, async (c) => {
 
 app.delete('/api/v1/nodes/:id', authMiddleware, async (c) => {
   const currentUser = c.get('user') as JwtUser;
-  const id = parseInt(c.req.param('id'), 10);
+  const id = parseInt(c.req.param('id') || '0', 10);
 
   if (currentUser.role === 'admin') {
     await c.env.DB.prepare('DELETE FROM nodes WHERE id = ?').bind(id).run();
@@ -524,7 +553,7 @@ app.post('/api/v1/users', authMiddleware, adminOnly, async (c) => {
 });
 
 app.put('/api/v1/users/:id', authMiddleware, adminOnly, async (c) => {
-  const id = parseInt(c.req.param('id'), 10);
+  const id = parseInt(c.req.param('id') || '0', 10);
   const body = await c.req.json();
 
   const user = await c.env.DB.prepare('SELECT * FROM users WHERE id = ?').bind(id).first<any>();
@@ -562,7 +591,7 @@ app.put('/api/v1/users/:id', authMiddleware, adminOnly, async (c) => {
 });
 
 app.delete('/api/v1/users/:id', authMiddleware, adminOnly, async (c) => {
-  const id = parseInt(c.req.param('id'), 10);
+  const id = parseInt(c.req.param('id') || '0', 10);
   const currentUser = c.get('user') as JwtUser;
   if (id === 1 || id === currentUser.userId) {
     return c.json({ error: '系统初始管理员或自身账号不可删除' }, 400);
@@ -809,10 +838,7 @@ app.get('/api/v1/traffic', authMiddleware, async (c) => {
     return c.json({
       total: { uplink: totalUplink, downlink: totalDownlink },
       hosts: hostItems,
-      protocols: [
-        { id: 'hy2', name: 'Hysteria 2', uplink: Math.floor(totalUplink * 0.9), downlink: Math.floor(totalDownlink * 0.9) },
-        { id: 'vless', name: 'VLESS-Reality', uplink: Math.floor(totalUplink * 0.1), downlink: Math.floor(totalDownlink * 0.1) }
-      ],
+      protocols: [], // Real protocol metrics require inbound telemetry from agent; omitted to avoid fabricated ratio
       users: userItems
     });
   } else {
@@ -833,10 +859,7 @@ app.get('/api/v1/traffic', authMiddleware, async (c) => {
     return c.json({
       total: { uplink: up, downlink: down },
       hosts: hostItems,
-      protocols: [
-        { id: 'hy2', name: 'Hysteria 2', uplink: Math.floor(up * 0.9), downlink: Math.floor(down * 0.9) },
-        { id: 'vless', name: 'VLESS-Reality', uplink: Math.floor(up * 0.1), downlink: Math.floor(down * 0.1) }
-      ],
+      protocols: [], // Real protocol metrics require inbound telemetry from agent; omitted to avoid fabricated ratio
       users: [{
         id: currentUser.userId,
         name: currentUser.username,
@@ -849,7 +872,7 @@ app.get('/api/v1/traffic', authMiddleware, async (c) => {
 });
 
 // Shared Subscription Handler supporting both /sub/:username/:token and /sub/:token
-async function handleSubscription(c: any, usernameParam?: string, tokenParam?: string) {
+async function handleSubscription(c: AppContext, usernameParam?: string, tokenParam?: string) {
   const token = tokenParam || c.req.param('token');
   const username = usernameParam || c.req.param('username');
 

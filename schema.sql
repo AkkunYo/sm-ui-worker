@@ -62,3 +62,11 @@ CREATE TABLE IF NOT EXISTS inbound_templates (
   created_at TEXT DEFAULT (datetime('now')),
   updated_at TEXT DEFAULT (datetime('now'))
 );
+
+CREATE TABLE IF NOT EXISTS login_attempts (
+  key TEXT PRIMARY KEY,
+  fail_count INTEGER NOT NULL DEFAULT 0,
+  first_fail_at INTEGER NOT NULL,
+  locked_until INTEGER NOT NULL DEFAULT 0
+);
+
