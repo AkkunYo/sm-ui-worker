@@ -1,3 +1,40 @@
+export interface InboundTemplateRecord {
+  id: number;
+  owner_id?: number | null;
+  name: string;
+  protocol: 'vless' | 'hysteria2';
+  reality_dest?: string | null;
+  reality_server_name?: string | null;
+  reality_private_key?: string | null;
+  reality_public_key?: string | null;
+  reality_short_id?: string | null;
+  hy2_up_mbps?: number | null;
+  hy2_down_mbps?: number | null;
+  hy2_masquerade?: string | null;
+  is_default?: number;
+  created_at?: string;
+  updated_at?: string;
+}
+
+export interface NodeInboundSlot {
+  id?: number;
+  node_id?: number;
+  template_id: number;
+  listen_port: number;
+  hop_ports?: string | null;
+  enabled?: number;
+  template_name?: string;
+  protocol: 'vless' | 'hysteria2';
+  reality_dest?: string | null;
+  reality_server_name?: string | null;
+  reality_private_key?: string | null;
+  reality_public_key?: string | null;
+  reality_short_id?: string | null;
+  hy2_up_mbps?: number | null;
+  hy2_down_mbps?: number | null;
+  hy2_masquerade?: string | null;
+}
+
 export interface NodeRecord {
   id: number;
   owner_id: number;
@@ -6,26 +43,14 @@ export interface NodeRecord {
   owner_proxy_password?: string;
   name: string;
   server_ip: string;
-  proxy_port: number;
-  hop_ports?: string;
-  protocol: string; // 'all' | 'vless' | 'hysteria2'
+  proxy_port?: number;
+  hop_ports?: string | null;
+  protocol?: string;
   token: string;
   status: string;
   used_up_bytes?: number;
   used_down_bytes?: number;
-}
-
-export interface InboundTemplateRecord {
-  id: number;
-  owner_id?: number | null;
-  reality_dest: string;
-  reality_server_name: string;
-  reality_private_key: string;
-  reality_public_key: string;
-  reality_short_id: string;
-  hy2_up_mbps: number;
-  hy2_down_mbps: number;
-  hy2_masquerade: string;
+  inbounds?: NodeInboundSlot[];
 }
 
 export interface UserRecord {
@@ -53,7 +78,7 @@ export function isUserActive(u: UserRecord): boolean {
 
 export function buildServerConfig(
   node: NodeRecord,
-  template: InboundTemplateRecord,
+  inboundSlots: NodeInboundSlot[],
   users: UserRecord[],
   baseDir = '/var/lib/sm-ui'
 ) {
@@ -71,61 +96,65 @@ export function buildServerConfig(
     name: u.username
   }));
 
-  const shortIDs = template.reality_short_id ? [template.reality_short_id] : ['0123456789abcdef'];
-
-  let destServer = template.reality_server_name;
-  let destPort = 443;
-  if (template.reality_dest.includes(':')) {
-    const parts = template.reality_dest.split(':');
-    destServer = parts[0];
-    destPort = parseInt(parts[1], 10) || 443;
-  }
-
   const inbounds: any[] = [];
-  const proto = (node.protocol || 'all').toLowerCase();
+  const inboundTags: string[] = [];
 
-  // 1. VLESS Reality Inbound (TCP)
-  if (proto === 'all' || proto === 'vless') {
-    inbounds.push({
-      type: 'vless',
-      tag: 'vless-in',
-      listen: '::',
-      listen_port: node.proxy_port,
-      users: vlessUsers,
-      tls: {
-        enabled: true,
-        server_name: template.reality_server_name,
-        reality: {
+  const enabledSlots = inboundSlots.filter(s => s.enabled === undefined || s.enabled === 1);
+
+  for (let i = 0; i < enabledSlots.length; i++) {
+    const slot = enabledSlots[i];
+    const tag = `${slot.protocol}-in-${slot.listen_port}-${i + 1}`;
+    inboundTags.push(tag);
+
+    if (slot.protocol === 'vless') {
+      const serverName = slot.reality_server_name || 'www.amazon.com';
+      let destServer = serverName;
+      let destPort = 443;
+      if (slot.reality_dest && slot.reality_dest.includes(':')) {
+        const parts = slot.reality_dest.split(':');
+        destServer = parts[0];
+        destPort = parseInt(parts[1], 10) || 443;
+      }
+      const shortIDs = slot.reality_short_id ? [slot.reality_short_id] : ['0123456789abcdef'];
+
+      inbounds.push({
+        type: 'vless',
+        tag,
+        listen: '::',
+        listen_port: slot.listen_port,
+        users: vlessUsers,
+        tls: {
           enabled: true,
-          handshake: {
-            server: destServer,
-            server_port: destPort
-          },
-          private_key: template.reality_private_key,
-          short_id: shortIDs
+          server_name: serverName,
+          reality: {
+            enabled: true,
+            handshake: {
+              server: destServer,
+              server_port: destPort
+            },
+            private_key: slot.reality_private_key || '',
+            short_id: shortIDs
+          }
         }
-      }
-    });
-  }
-
-  // 2. Hysteria 2 Inbound (UDP)
-  if (proto === 'all' || proto === 'hysteria2') {
-    inbounds.push({
-      type: 'hysteria2',
-      tag: 'hy2-in',
-      listen: '::',
-      listen_port: node.proxy_port,
-      users: hy2Users,
-      up_mbps: template.hy2_up_mbps || 100,
-      down_mbps: template.hy2_down_mbps || 100,
-      ignore_client_bandwidth: false,
-      masquerade: template.hy2_masquerade || 'https://bing.com',
-      tls: {
-        enabled: true,
-        certificate_path: `${baseDir}/certs/selfsigned.crt`,
-        key_path: `${baseDir}/certs/selfsigned.key`
-      }
-    });
+      });
+    } else if (slot.protocol === 'hysteria2') {
+      inbounds.push({
+        type: 'hysteria2',
+        tag,
+        listen: '::',
+        listen_port: slot.listen_port,
+        users: hy2Users,
+        up_mbps: slot.hy2_up_mbps || 100,
+        down_mbps: slot.hy2_down_mbps || 100,
+        ignore_client_bandwidth: false,
+        masquerade: slot.hy2_masquerade || 'https://bing.com',
+        tls: {
+          enabled: true,
+          certificate_path: `${baseDir}/certs/selfsigned.crt`,
+          key_path: `${baseDir}/certs/selfsigned.key`
+        }
+      });
+    }
   }
 
   return {
@@ -139,7 +168,7 @@ export function buildServerConfig(
         listen: '127.0.0.1:8080',
         stats: {
           enabled: true,
-          inbounds: ['vless-in', 'hy2-in'],
+          inbounds: inboundTags,
           users: activeUserNames
         }
       }
@@ -158,7 +187,7 @@ export function buildServerConfig(
     route: {
       rules: [
         {
-          inbound: ['vless-in', 'hy2-in'],
+          inbound: inboundTags,
           outbound: 'direct'
         }
       ]

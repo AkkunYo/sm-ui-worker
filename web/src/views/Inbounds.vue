@@ -1,159 +1,418 @@
 <template>
-  <div class="p-4 sm:p-8 space-y-8 max-w-4xl mx-auto">
-    <div>
-      <h1 class="text-2xl font-bold tracking-tight text-white flex items-center space-x-2.5">
-        <span>协议模板配置 (Inbound)</span>
-      </h1>
-      <p class="text-sm text-slate-400 mt-1">
-        统一配置 VLESS REALITY 和 Hysteria 2 带宽，应用到接入主机。
-      </p>
+  <div class="p-4 sm:p-8 space-y-8 max-w-6xl mx-auto">
+    <!-- Header -->
+    <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+      <div>
+        <h1 class="text-2xl font-bold tracking-tight text-white flex items-center gap-2.5">
+          <span>协议模板池 (Inbound Templates)</span>
+        </h1>
+        <p class="text-sm text-slate-400 mt-1">
+          三层解耦架构：协议模板池独立管理，支持 VLESS-Reality 与 Hysteria 2 单协议原子化配置，供各主机按端口插槽自由绑定。
+        </p>
+      </div>
+      <button
+        @click="openCreateModal"
+        class="px-4 py-2.5 rounded-xl bg-emerald-500 hover:bg-emerald-600 text-slate-950 font-semibold text-sm transition flex items-center justify-center space-x-2 shadow-lg shadow-emerald-500/20 self-start sm:self-auto shrink-0"
+      >
+        <Plus class="w-4 h-4" />
+        <span>新建协议模板</span>
+      </button>
     </div>
 
-    <div class="bg-slate-900 border border-slate-800 rounded-3xl p-6 sm:p-8 space-y-8 shadow-2xl">
-      <PageSkeleton v-if="loading" label="正在读取协议模板…" />
-      <div v-else-if="loadError" class="text-sm text-rose-300" role="alert">
-        {{ loadError }}
-        <button type="button" @click="loadTemplate" class="ml-2 underline">重新加载</button>
+    <!-- Error Banner -->
+    <div v-if="loadError" class="rounded-xl border border-rose-500/30 bg-rose-500/10 p-4 text-sm text-rose-300 flex items-center justify-between" role="alert">
+      <span>{{ loadError }}</span>
+      <button type="button" @click="loadTemplates" class="underline text-xs ml-3">重新加载</button>
+    </div>
+
+    <!-- Skeleton Loading -->
+    <PageSkeleton v-if="loading" label="正在读取协议模板池…" />
+
+    <!-- Templates Content -->
+    <div v-else class="space-y-6">
+      <!-- Filter Tabs -->
+      <div class="flex flex-wrap items-center justify-between gap-3 bg-slate-900/80 border border-slate-800 p-2 rounded-2xl">
+        <div class="flex items-center space-x-1.5 overflow-x-auto">
+          <button
+            v-for="tab in filterTabs"
+            :key="tab.id"
+            @click="activeFilter = tab.id"
+            class="px-3.5 py-1.5 rounded-xl text-xs font-semibold transition whitespace-nowrap"
+            :class="activeFilter === tab.id
+              ? 'bg-emerald-500/15 text-emerald-400 border border-emerald-500/30'
+              : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/60'"
+          >
+            {{ tab.label }} ({{ getFilteredCount(tab.id) }})
+          </button>
+        </div>
+        <div class="text-xs text-slate-500 hidden sm:block pr-2">
+          共 {{ templates.length }} 个模板可用
+        </div>
       </div>
-      <form v-else @submit.prevent="saveTemplate" class="space-y-6">
-        <fieldset :disabled="loading || !!loadError || saving" class="space-y-6 disabled:opacity-60">
-        <!-- VLESS REALITY Section -->
-        <div class="space-y-4">
-          <div class="flex flex-wrap gap-3 items-center justify-between border-b border-slate-800/80 pb-3">
-            <h2 class="text-base font-semibold text-white flex items-center space-x-2">
-              <span class="w-2 h-2 rounded-full bg-emerald-500"></span>
-              <span>VLESS + REALITY 伪装目标配置</span>
-            </h2>
-            <button
-              type="button"
-              @click="openSniModal"
-              class="px-3 py-1.5 rounded-xl bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 text-xs font-semibold flex items-center space-x-1.5 transition shadow-sm"
-            >
-              <Globe class="w-3.5 h-3.5" />
-              <span>选择推荐 SNI (预设库)</span>
+
+      <!-- Empty State -->
+      <div v-if="filteredTemplates.length === 0" class="p-12 text-center rounded-3xl bg-slate-900 border border-slate-800 text-slate-500 space-y-3">
+        <p class="text-sm">没有匹配的协议模板</p>
+        <button
+          @click="openCreateModal"
+          class="px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-medium transition inline-flex items-center space-x-1.5"
+        >
+          <Plus class="w-3.5 h-3.5" />
+          <span>立即创建模板</span>
+        </button>
+      </div>
+
+      <!-- Template Cards Grid -->
+      <div v-else class="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <div
+          v-for="tmpl in filteredTemplates"
+          :key="tmpl.id"
+          class="rounded-2xl border bg-slate-900/90 p-5 space-y-4 flex flex-col justify-between transition hover:border-slate-700"
+          :class="tmpl.protocol === 'vless' ? 'border-emerald-500/20' : 'border-sky-500/20'"
+        >
+          <div class="space-y-3.5">
+            <!-- Header Badges -->
+            <div class="flex items-start justify-between gap-2">
+              <div class="flex flex-wrap items-center gap-2">
+                <!-- Protocol Badge -->
+                <span
+                  v-if="tmpl.protocol === 'vless'"
+                  class="px-2.5 py-0.5 rounded-lg text-xs font-bold uppercase tracking-wider bg-emerald-500/15 text-emerald-300 border border-emerald-500/30 flex items-center gap-1.5"
+                >
+                  <span class="w-1.5 h-1.5 rounded-full bg-emerald-400"></span>
+                  VLESS Reality
+                </span>
+                <span
+                  v-else
+                  class="px-2.5 py-0.5 rounded-lg text-xs font-bold uppercase tracking-wider bg-sky-500/15 text-sky-300 border border-sky-500/30 flex items-center gap-1.5"
+                >
+                  <span class="w-1.5 h-1.5 rounded-full bg-sky-400"></span>
+                  Hysteria 2
+                </span>
+
+                <!-- Scope Badge -->
+                <span
+                  v-if="tmpl.owner_id === null"
+                  class="px-2 py-0.5 rounded-lg text-[11px] font-medium bg-violet-500/10 text-violet-300 border border-violet-500/20"
+                >
+                  🌐 系统公共
+                </span>
+                <span
+                  v-else
+                  class="px-2 py-0.5 rounded-lg text-[11px] font-medium bg-amber-500/10 text-amber-300 border border-amber-500/20"
+                >
+                  🔒 租户私有<span v-if="isAdmin && tmpl.owner_username"> ({{ tmpl.owner_username }})</span>
+                </span>
+
+                <!-- Default Badge -->
+                <span
+                  v-if="tmpl.is_default"
+                  class="px-2 py-0.5 rounded-lg text-[11px] font-medium bg-emerald-500/10 text-emerald-400 border border-emerald-500/20"
+                >
+                  ★ 默认
+                </span>
+              </div>
+
+              <!-- Action Buttons -->
+              <div class="flex items-center space-x-1 shrink-0">
+                <button
+                  v-if="canEdit(tmpl)"
+                  @click="openEditModal(tmpl)"
+                  class="p-1.5 text-slate-400 hover:text-emerald-400 hover:bg-emerald-500/10 rounded-lg transition"
+                  title="编辑模板"
+                >
+                  <Sliders class="w-4 h-4" />
+                </button>
+                <button
+                  v-if="canEdit(tmpl)"
+                  @click="deleteTemplate(tmpl)"
+                  class="p-1.5 text-slate-400 hover:text-rose-400 hover:bg-rose-500/10 rounded-lg transition"
+                  title="删除模板"
+                >
+                  <Trash2 class="w-4 h-4" />
+                </button>
+                <span v-else class="text-[11px] text-slate-500 px-2 py-1">只读</span>
+              </div>
+            </div>
+
+            <!-- Name -->
+            <div>
+              <h3 class="text-base font-semibold text-white tracking-tight">{{ tmpl.name }}</h3>
+              <p class="text-[11px] text-slate-500 mt-0.5 font-mono">ID: #{{ tmpl.id }} · 更新于 {{ tmpl.updated_at || tmpl.created_at || '最近' }}</p>
+            </div>
+
+            <!-- Details Block: VLESS Reality -->
+            <div v-if="tmpl.protocol === 'vless'" class="space-y-2 pt-1 text-xs">
+              <div class="grid grid-cols-2 gap-2 p-3 rounded-xl bg-slate-950/60 border border-slate-800/80 font-mono">
+                <div>
+                  <span class="text-slate-500 text-[10px] block">SNI 伪装域名</span>
+                  <span class="text-slate-200 truncate block font-medium">{{ tmpl.reality_server_name || '未设置' }}</span>
+                </div>
+                <div>
+                  <span class="text-slate-500 text-[10px] block">回落目标 (Dest)</span>
+                  <span class="text-slate-200 truncate block font-medium">{{ tmpl.reality_dest || '未设置' }}</span>
+                </div>
+              </div>
+
+              <div class="p-3 rounded-xl bg-slate-950/60 border border-slate-800/80 space-y-1.5 font-mono text-[11px]">
+                <div class="flex items-center justify-between">
+                  <span class="text-slate-500 text-[10px]">ShortID:</span>
+                  <span class="text-slate-300 font-bold">{{ tmpl.reality_short_id || '0123456789abcdef' }}</span>
+                </div>
+                <div class="flex items-center justify-between gap-2">
+                  <span class="text-slate-500 text-[10px] shrink-0">公钥 (Public Key):</span>
+                  <span class="text-slate-400 truncate text-[10px]" :title="tmpl.reality_public_key">{{ tmpl.reality_public_key || '系统自动派发' }}</span>
+                  <button
+                    v-if="tmpl.reality_public_key"
+                    type="button"
+                    @click="copyText(tmpl.reality_public_key)"
+                    class="text-slate-400 hover:text-emerald-400 transition shrink-0"
+                    title="复制公钥"
+                  >
+                    <Copy class="w-3.5 h-3.5" />
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            <!-- Details Block: Hysteria 2 -->
+            <div v-else-if="tmpl.protocol === 'hysteria2'" class="space-y-2 pt-1 text-xs">
+              <div class="grid grid-cols-2 gap-2 p-3 rounded-xl bg-slate-950/60 border border-slate-800/80 font-mono">
+                <div>
+                  <span class="text-slate-500 text-[10px] block">服务器上行 (发送)</span>
+                  <span class="text-sky-300 text-sm font-bold">{{ tmpl.hy2_up_mbps || 100 }} <span class="text-[10px] font-normal text-slate-400">Mbps</span></span>
+                </div>
+                <div>
+                  <span class="text-slate-500 text-[10px] block">服务器下行 (接收)</span>
+                  <span class="text-sky-300 text-sm font-bold">{{ tmpl.hy2_down_mbps || 100 }} <span class="text-[10px] font-normal text-slate-400">Mbps</span></span>
+                </div>
+              </div>
+
+              <div class="p-3 rounded-xl bg-slate-950/60 border border-slate-800/80 space-y-1 font-mono text-[11px]">
+                <div class="flex items-center justify-between gap-2">
+                  <span class="text-slate-500 text-[10px]">伪装回落网址:</span>
+                  <span class="text-slate-300 truncate">{{ tmpl.hy2_masquerade || 'https://bing.com' }}</span>
+                </div>
+                <div class="text-[10px] text-slate-500">
+                  自签 TLS 证书在主机运行时自动生成；UDP 拥塞控制支持。
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Bottom Footer Note -->
+          <div class="pt-3 border-t border-slate-800/60 flex items-center justify-between text-[11px] text-slate-500">
+            <span>支持多主机单端口/跳跃端口复用</span>
+            <span class="text-slate-400 font-mono">Slot Ready</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Create / Edit Template Modal -->
+    <Teleport to="body">
+      <div
+        v-if="showModal"
+        @click.self="showModal = false"
+        class="fixed inset-0 bg-slate-950/80 backdrop-blur-sm z-[100] flex items-center justify-center p-4 overflow-y-auto"
+      >
+        <div class="bg-slate-900 border border-slate-800 rounded-3xl w-full max-w-xl p-6 shadow-2xl space-y-6 my-8">
+          <div class="flex items-center justify-between">
+            <div>
+              <h2 class="text-lg font-bold text-white flex items-center space-x-2">
+                <span>{{ isEditing ? '编辑协议模板' : '新建协议模板' }}</span>
+              </h2>
+              <p class="text-xs text-slate-400 mt-0.5">
+                {{ isEditing ? '更新模板参数，绑定该模板的主机在重连或心跳后生效' : '创建独立的单协议模板，之后可在主机中绑定为插槽' }}
+              </p>
+            </div>
+            <button @click="showModal = false" class="text-slate-400 hover:text-white">
+              <X class="w-5 h-5" />
             </button>
           </div>
 
-          <!-- Input Fields for SNI and Dest -->
-          <div class="grid grid-cols-1 md:grid-cols-2 gap-4 pt-1">
-            <div>
-              <div class="flex items-center justify-between mb-1.5">
-                <label class="block text-xs font-semibold text-slate-300 uppercase tracking-wider">
-                  伪装域名 (Server Name / SNI) <span class="text-rose-400">*</span>
+          <form @submit.prevent="saveTemplate" class="space-y-4">
+            <!-- 1. Name & Protocol -->
+            <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div>
+                <label class="block text-xs font-semibold text-slate-300 uppercase tracking-wider mb-1.5">
+                  模板名称 <span class="text-rose-400">*</span>
                 </label>
+                <input
+                  v-model="form.name"
+                  type="text"
+                  required
+                  class="w-full px-4 py-2.5 rounded-xl bg-slate-950 border border-slate-800 text-slate-100 text-sm focus:border-emerald-500 focus:outline-none"
+                  placeholder="例如: 极速 VLESS / 100M-Hy2"
+                />
               </div>
-              <input
-                v-model="template.reality_server_name"
-                type="text"
-                required
-                class="w-full px-4 py-2.5 rounded-xl bg-slate-950 border border-slate-800 text-slate-100 font-mono text-sm focus:border-emerald-500 focus:outline-none transition"
-                placeholder="例如: www.amazon.com"
-              />
-              <p class="text-[11px] text-slate-500 mt-1">客户端握手目标 SNI 伪装域名</p>
-            </div>
 
-            <div>
-              <div class="flex items-center justify-between mb-1.5">
-                <label class="block text-xs font-semibold text-slate-300 uppercase tracking-wider">
-                  回落目标 (Dest) <span class="text-rose-400">*</span>
+              <div>
+                <label class="block text-xs font-semibold text-slate-300 uppercase tracking-wider mb-1.5">
+                  协议类型 <span class="text-rose-400">*</span>
                 </label>
+                <select
+                  v-model="form.protocol"
+                  :disabled="isEditing"
+                  class="w-full px-4 py-2.5 rounded-xl bg-slate-950 border border-slate-800 text-slate-100 text-sm focus:border-emerald-500 focus:outline-none disabled:opacity-50"
+                >
+                  <option value="vless">VLESS + REALITY (TCP)</option>
+                  <option value="hysteria2">Hysteria 2 (UDP)</option>
+                </select>
               </div>
-              <input
-                v-model="template.reality_dest"
-                type="text"
-                required
-                class="w-full px-4 py-2.5 rounded-xl bg-slate-950 border border-slate-800 text-slate-100 font-mono text-sm focus:border-emerald-500 focus:outline-none transition"
-                placeholder="例如: www.amazon.com:443"
-              />
-              <p class="text-[11px] text-slate-500 mt-1">非法探测握手时的真实回落网站与端口</p>
             </div>
-          </div>
-        </div>
 
-        <section class="space-y-4">
-          <h2 class="text-base font-semibold text-white border-b border-slate-800/80 pb-3 flex items-center gap-2">
-            <Zap class="w-4 h-4 text-blue-400" />
-            Hysteria 2 带宽
-          </h2>
-          <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            <div>
-              <label for="hy2-up" class="block text-xs font-semibold text-slate-300 mb-1.5">服务器上行 (Mbps)</label>
-              <input id="hy2-up" v-model.number="template.hy2_up_mbps" type="number" min="0" max="2147483647" step="1" required
-                class="w-full px-4 py-2.5 rounded-xl bg-slate-950 border border-slate-800 text-slate-100 font-mono text-sm focus:border-blue-500 focus:outline-none" />
-              <p class="text-[11px] text-slate-500 mt-1">服务器发送，对应客户端的下载方向</p>
-            </div>
-            <div>
-              <label for="hy2-down" class="block text-xs font-semibold text-slate-300 mb-1.5">服务器下行 (Mbps)</label>
-              <input id="hy2-down" v-model.number="template.hy2_down_mbps" type="number" min="0" max="2147483647" step="1" required
-                class="w-full px-4 py-2.5 rounded-xl bg-slate-950 border border-slate-800 text-slate-100 font-mono text-sm focus:border-blue-500 focus:outline-none" />
-              <p class="text-[11px] text-slate-500 mt-1">服务器接收，对应客户端的上传方向</p>
-            </div>
-          </div>
-          <p class="text-xs text-slate-400">每台主机使用相同设置。填写非负整数；0 表示不设置该方向的带宽上限，实际速度取决于线路与拥塞控制。</p>
-        </section>
+            <!-- 2. VLESS REALITY Fields -->
+            <div v-if="form.protocol === 'vless'" class="space-y-4 pt-1">
+              <div class="flex items-center justify-between border-t border-slate-800 pt-3">
+                <span class="text-xs font-semibold text-emerald-400 uppercase tracking-wider">REALITY 伪装目标配置</span>
+                <button
+                  type="button"
+                  @click="openSniModal"
+                  class="px-2.5 py-1 rounded-lg bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 text-xs font-medium flex items-center space-x-1 transition"
+                >
+                  <Globe class="w-3.5 h-3.5" />
+                  <span>选择推荐 SNI</span>
+                </button>
+              </div>
 
-        <!-- Built-in System Managed Cards -->
-        <div class="space-y-3 pt-2">
-          <div class="text-xs font-semibold text-slate-400 uppercase tracking-wider">系统内置自动化管理项</div>
-          <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
-            <!-- Reality Keypair Card -->
-            <div class="p-4 rounded-2xl bg-slate-950/60 border border-slate-800/80 space-y-1.5">
-              <div class="flex items-center justify-between">
-                <div class="flex items-center space-x-2 text-xs font-semibold text-slate-200">
-                  <ShieldCheck class="w-4 h-4 text-emerald-400" />
-                  <span>X25519 签名密钥</span>
+              <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div>
+                  <label class="block text-xs font-semibold text-slate-300 mb-1.5">伪装域名 (Server Name / SNI) *</label>
+                  <input
+                    v-model="form.reality_server_name"
+                    type="text"
+                    required
+                    class="w-full px-4 py-2.5 rounded-xl bg-slate-950 border border-slate-800 text-slate-100 font-mono text-sm focus:border-emerald-500 focus:outline-none"
+                    placeholder="例如: www.amazon.com"
+                  />
                 </div>
-                <span class="px-2 py-0.5 rounded text-[10px] font-semibold bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
-                  默认内置 · 免维护
-                </span>
-              </div>
-              <p class="text-[11px] text-slate-400 leading-relaxed">
-                遵循 RFC 7748 X25519 标准私钥、公钥与 16 位 ShortID。密钥全链路自动注入客户端订阅，无需手动输入或粘贴。
-              </p>
-            </div>
-
-            <!-- Hysteria 2 Card -->
-            <div class="p-4 rounded-2xl bg-slate-950/60 border border-slate-800/80 space-y-1.5">
-              <div class="flex items-center justify-between">
-                <div class="flex items-center space-x-2 text-xs font-semibold text-slate-200">
-                  <Zap class="w-4 h-4 text-blue-400" />
-                  <span>Hysteria 2 高速传输</span>
+                <div>
+                  <label class="block text-xs font-semibold text-slate-300 mb-1.5">回落目标 (Dest) *</label>
+                  <input
+                    v-model="form.reality_dest"
+                    type="text"
+                    required
+                    class="w-full px-4 py-2.5 rounded-xl bg-slate-950 border border-slate-800 text-slate-100 font-mono text-sm focus:border-emerald-500 focus:outline-none"
+                    placeholder="例如: www.amazon.com:443"
+                  />
                 </div>
-                <span class="px-2 py-0.5 rounded text-[10px] font-semibold bg-blue-500/10 text-blue-400 border border-blue-500/20">
-                  默认内置 · 自动签发
-                </span>
               </div>
-              <p class="text-[11px] text-slate-400 leading-relaxed">
-                自签名 TLS 证书由系统自动生成。Hy2 使用 UDP，与 VLESS 的 TCP 监听共用业务端口号。
-              </p>
-            </div>
-          </div>
-        </div>
 
-        <!-- Submit Button -->
-        <div class="flex flex-col sm:flex-row gap-4 items-start sm:items-center justify-between pt-6 border-t border-slate-800">
-          <p class="text-xs text-slate-500">保存后下发配置，离线主机重连后同步。配置变化会重启代理核心，现有连接会中断。</p>
-          <button
-            type="submit"
-            :disabled="saving"
-            class="shrink-0 px-6 py-2.5 rounded-xl bg-emerald-500 hover:bg-emerald-600 text-slate-950 font-semibold text-sm transition disabled:opacity-50 shadow-lg shadow-emerald-500/20 flex items-center space-x-2"
-          >
-            <span v-if="saving">正在保存…</span>
-            <span v-else>保存并下发配置</span>
-          </button>
+              <!-- Keys block -->
+              <div class="p-3.5 rounded-xl bg-slate-950/80 border border-slate-800 space-y-2 text-xs">
+                <div class="flex items-center justify-between">
+                  <span class="text-slate-400 font-semibold">X25519 密钥与 ShortID</span>
+                  <button
+                    type="button"
+                    @click="generateKeys"
+                    :disabled="generatingKeys"
+                    class="px-2 py-0.5 rounded text-[11px] font-medium bg-slate-800 hover:bg-slate-700 text-slate-300 transition"
+                  >
+                    {{ generatingKeys ? '生成中…' : '重新生成密钥对' }}
+                  </button>
+                </div>
+                <div class="space-y-1 font-mono text-[11px]">
+                  <div class="truncate text-slate-400">
+                    <span class="text-slate-500">ShortID:</span> {{ form.reality_short_id || '(保存时自动生成)' }}
+                  </div>
+                  <div class="truncate text-slate-400">
+                    <span class="text-slate-500">公钥:</span> {{ form.reality_public_key || '(保存时自动生成)' }}
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- 3. Hysteria 2 Fields -->
+            <div v-else-if="form.protocol === 'hysteria2'" class="space-y-4 pt-1">
+              <div class="border-t border-slate-800 pt-3">
+                <span class="text-xs font-semibold text-sky-400 uppercase tracking-wider">Hysteria 2 速率与伪装</span>
+              </div>
+
+              <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div>
+                  <label class="block text-xs font-semibold text-slate-300 mb-1.5">服务器上行 (Mbps)</label>
+                  <input
+                    v-model.number="form.hy2_up_mbps"
+                    type="number"
+                    min="0"
+                    step="1"
+                    required
+                    class="w-full px-4 py-2.5 rounded-xl bg-slate-950 border border-slate-800 text-slate-100 font-mono text-sm focus:border-sky-500 focus:outline-none"
+                  />
+                  <p class="text-[11px] text-slate-500 mt-1">对应客户端的下载方向，0 表示不限速</p>
+                </div>
+                <div>
+                  <label class="block text-xs font-semibold text-slate-300 mb-1.5">服务器下行 (Mbps)</label>
+                  <input
+                    v-model.number="form.hy2_down_mbps"
+                    type="number"
+                    min="0"
+                    step="1"
+                    required
+                    class="w-full px-4 py-2.5 rounded-xl bg-slate-950 border border-slate-800 text-slate-100 font-mono text-sm focus:border-sky-500 focus:outline-none"
+                  />
+                  <p class="text-[11px] text-slate-500 mt-1">对应客户端的上传方向，0 表示不限速</p>
+                </div>
+              </div>
+
+              <div>
+                <label class="block text-xs font-semibold text-slate-300 mb-1.5">HTTP 伪装网址</label>
+                <input
+                  v-model="form.hy2_masquerade"
+                  type="text"
+                  required
+                  class="w-full px-4 py-2.5 rounded-xl bg-slate-950 border border-slate-800 text-slate-100 font-mono text-sm focus:border-sky-500 focus:outline-none"
+                  placeholder="https://bing.com"
+                />
+                <p class="text-[11px] text-slate-500 mt-1">端口直接 HTTP 探测时伪装返回的目标网站</p>
+              </div>
+            </div>
+
+            <!-- 4. Options -->
+            <div class="pt-2 border-t border-slate-800 space-y-2">
+              <label class="flex items-center space-x-2 text-xs text-slate-300 cursor-pointer">
+                <input type="checkbox" v-model="form.is_default" class="rounded bg-slate-950 border-slate-800 text-emerald-500 focus:ring-0 w-4 h-4" />
+                <span>设为该协议的默认模板 (新建主机时自动绑定默认模板)</span>
+              </label>
+
+              <label v-if="isAdmin && !isEditing" class="flex items-center space-x-2 text-xs text-violet-300 cursor-pointer">
+                <input type="checkbox" v-model="form.is_system" class="rounded bg-slate-950 border-slate-800 text-violet-500 focus:ring-0 w-4 h-4" />
+                <span>设为系统公共模板 (全局可用，所有租户均可在其主机中挂载使用)</span>
+              </label>
+            </div>
+
+            <!-- Error Feedback -->
+            <p v-if="saveError" class="text-sm text-rose-300" role="alert">{{ saveError }}</p>
+
+            <!-- Actions -->
+            <div class="flex justify-end space-x-3 pt-3">
+              <button
+                type="button"
+                @click="showModal = false"
+                class="px-4 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 text-sm font-medium transition"
+              >
+                取消
+              </button>
+              <button
+                type="submit"
+                :disabled="saving"
+                class="px-5 py-2.5 rounded-xl bg-emerald-500 hover:bg-emerald-600 text-slate-950 font-semibold text-sm transition disabled:opacity-50 shadow-lg shadow-emerald-500/20"
+              >
+                {{ saving ? '正在保存…' : '保存模板' }}
+              </button>
+            </div>
+          </form>
         </div>
-        </fieldset>
-        <p v-if="saveError" class="text-sm text-rose-300" role="alert">{{ saveError }}</p>
-        <p v-if="saved" class="text-sm text-emerald-300" role="status">模板已保存并下发，请在主机状态中确认应用结果。</p>
-      </form>
-    </div>
+      </div>
+    </Teleport>
 
     <!-- SNI Selection Modal -->
     <Teleport to="body">
       <div
         v-if="showSniModal"
         @click.self="showSniModal = false"
-        class="fixed inset-0 bg-slate-950/80 backdrop-blur-sm z-[100] flex items-center justify-center p-4"
+        class="fixed inset-0 bg-slate-950/80 backdrop-blur-sm z-[110] flex items-center justify-center p-4"
       >
         <div class="bg-slate-900 border border-slate-800 rounded-3xl w-full max-w-2xl p-6 shadow-2xl space-y-5">
           <div class="flex items-center justify-between">
@@ -187,7 +446,7 @@
               :key="preset.sni"
               @click="applyPresetAndClose(preset)"
               class="p-3.5 flex items-center justify-between hover:bg-slate-800/50 cursor-pointer transition group"
-              :class="template.reality_server_name === preset.sni ? 'bg-emerald-500/10' : ''"
+              :class="form.reality_server_name === preset.sni ? 'bg-emerald-500/10' : ''"
             >
               <div class="space-y-0.5">
                 <div class="flex items-center space-x-2">
@@ -196,12 +455,6 @@
                   </span>
                   <span class="px-1.5 py-0.5 rounded text-[10px] font-medium bg-slate-800 text-slate-300">
                     {{ preset.label }}
-                  </span>
-                  <span
-                    v-if="template.reality_server_name === preset.sni"
-                    class="px-1.5 py-0.5 rounded text-[10px] font-semibold bg-emerald-500/20 text-emerald-400 border border-emerald-500/30"
-                  >
-                    当前选用
                   </span>
                 </div>
                 <div class="text-[11px] text-slate-500 font-mono">
@@ -213,17 +466,12 @@
                 type="button"
                 @click.stop="applyPresetAndClose(preset)"
                 class="px-3 py-1.5 rounded-lg text-xs font-medium transition"
-                :class="template.reality_server_name === preset.sni
+                :class="form.reality_server_name === preset.sni
                   ? 'bg-emerald-500 text-slate-950 font-semibold'
-                  : 'bg-slate-800 text-slate-300 hover:bg-emerald-500 hover:text-slate-950 group-hover:bg-emerald-500 group-hover:text-slate-950'"
+                  : 'bg-slate-800 text-slate-300 hover:bg-emerald-500 hover:text-slate-950'"
               >
-                <span v-if="template.reality_server_name === preset.sni">已选用</span>
-                <span v-else>选用</span>
+                <span>选用</span>
               </button>
-            </div>
-
-            <div v-if="filteredPresets.length === 0" class="p-8 text-center text-xs text-slate-500">
-              未搜索到匹配的预设域名，可在主页面直接输入任意自定义域名。
             </div>
           </div>
 
@@ -244,31 +492,55 @@
 
 <script setup>
 import { ref, computed, onMounted } from 'vue'
-import { Search, Globe, ShieldCheck, Zap, X } from 'lucide-vue-next'
-import { request } from '../api'
+import { Search, Globe, ShieldCheck, Zap, X, Plus, Trash2, Copy, Sliders } from 'lucide-vue-next'
+import { request, getUser } from '../api'
 import PageSkeleton from '../components/PageSkeleton.vue'
 import { usePageRead } from '../composables/usePageRead'
-const readPage = usePageRead()
 
-const template = ref({
-  reality_dest: 'www.amazon.com:443',
+const readPage = usePageRead()
+const currentUser = getUser()
+const isAdmin = computed(() => currentUser?.role === 'admin')
+
+const templates = ref([])
+const loading = ref(true)
+const loadError = ref('')
+const saving = ref(false)
+const saveError = ref('')
+const generatingKeys = ref(false)
+
+const activeFilter = ref('all')
+const filterTabs = [
+  { id: 'all', label: '全部' },
+  { id: 'vless', label: 'VLESS Reality' },
+  { id: 'hysteria2', label: 'Hysteria 2' },
+  { id: 'system', label: '系统公共' },
+  { id: 'private', label: '租户私有' }
+]
+
+const showModal = ref(false)
+const isEditing = ref(false)
+const editingId = ref(null)
+
+const defaultForm = () => ({
+  name: '',
+  protocol: 'vless',
   reality_server_name: 'www.amazon.com',
+  reality_dest: 'www.amazon.com:443',
   reality_private_key: '',
   reality_public_key: '',
   reality_short_id: '',
   hy2_up_mbps: 100,
-  hy2_down_mbps: 100
+  hy2_down_mbps: 100,
+  hy2_masquerade: 'https://bing.com',
+  is_default: false,
+  is_system: false
 })
+
+const form = ref(defaultForm())
 
 const showSniModal = ref(false)
 const sniSearch = ref('')
-const saving = ref(false)
-const loading = ref(true)
-const loadError = ref('')
-const saveError = ref('')
-const saved = ref(false)
 
-// 3x-ui standard recommended TLS 1.3 Reality domains with descriptive context
 const presets = [
   { sni: 'www.amazon.com', dest: 'www.amazon.com:443', label: '亚马逊 · 首选', desc: '3x-ui 默认首选，全国各地直连稳定性极高' },
   { sni: 'aws.amazon.com', dest: 'aws.amazon.com:443', label: 'AWS 官网', desc: 'AWS 全球 Anycast CDN，大流量不易引起注意' },
@@ -289,61 +561,123 @@ const filteredPresets = computed(() => {
   return presets.filter(p => p.sni.toLowerCase().includes(q) || p.label.toLowerCase().includes(q) || p.desc.toLowerCase().includes(q))
 })
 
-function openSniModal() {
-  sniSearch.value = ''
-  showSniModal.value = true
+const filteredTemplates = computed(() => {
+  if (activeFilter.value === 'vless') return templates.value.filter(t => t.protocol === 'vless')
+  if (activeFilter.value === 'hysteria2') return templates.value.filter(t => t.protocol === 'hysteria2')
+  if (activeFilter.value === 'system') return templates.value.filter(t => t.owner_id === null)
+  if (activeFilter.value === 'private') return templates.value.filter(t => t.owner_id !== null)
+  return templates.value
+})
+
+function getFilteredCount(tabId) {
+  if (tabId === 'vless') return templates.value.filter(t => t.protocol === 'vless').length
+  if (tabId === 'hysteria2') return templates.value.filter(t => t.protocol === 'hysteria2').length
+  if (tabId === 'system') return templates.value.filter(t => t.owner_id === null).length
+  if (tabId === 'private') return templates.value.filter(t => t.owner_id !== null).length
+  return templates.value.length
 }
 
-function applyPresetAndClose(preset) {
-  template.value.reality_server_name = preset.sni
-  template.value.reality_dest = preset.dest
-  showSniModal.value = false
+function canEdit(tmpl) {
+  if (tmpl.owner_id === null) return isAdmin.value
+  return isAdmin.value || tmpl.owner_id === currentUser?.id
 }
 
-async function loadTemplate() {
+async function loadTemplates() {
   loading.value = true
   loadError.value = ''
   try {
-    const data = await readPage('/api/v1/template')
-    if (!data || typeof data !== 'object' || Array.isArray(data)) throw new Error('模板响应无效')
-    if (data) {
-      template.value = data
-      if (!template.value.reality_server_name) {
-        template.value.reality_server_name = 'www.amazon.com'
-        template.value.reality_dest = 'www.amazon.com:443'
-      }
-    }
+    const data = await readPage('/api/v1/templates')
+    templates.value = Array.isArray(data) ? data : []
   } catch (err) {
-    if (err.name === 'AbortError') return
-    loadError.value = err.message || '读取模板失败'
+    loadError.value = err.message || '加载协议模板失败'
   } finally {
     loading.value = false
   }
 }
 
-async function saveTemplate() {
-  if (loading.value || loadError.value || saving.value) return
-  saved.value = false
-  saveError.value = ''
-  for (const value of [template.value.hy2_up_mbps, template.value.hy2_down_mbps]) {
-    if (!Number.isInteger(value) || value < 0 || value > 2147483647) {
-      saveError.value = 'Hy2 带宽必须为 0 到 2147483647 之间的整数 Mbps'
-      return
-    }
-  }
-  saving.value = true
+async function generateKeys() {
+  generatingKeys.value = true
   try {
-    await request('/api/v1/template', {
-      method: 'PUT',
-      body: JSON.stringify({
-        reality_server_name: template.value.reality_server_name,
-        reality_dest: template.value.reality_dest,
-        hy2_up_mbps: template.value.hy2_up_mbps,
-        hy2_down_mbps: template.value.hy2_down_mbps
+    const res = await request('/api/v1/template/generate-keys')
+    if (res) {
+      form.value.reality_private_key = res.reality_private_key
+      form.value.reality_public_key = res.reality_public_key
+      form.value.reality_short_id = res.reality_short_id
+    }
+  } catch (err) {
+    saveError.value = '生成密钥失败: ' + err.message
+  } finally {
+    generatingKeys.value = false
+  }
+}
+
+function openCreateModal() {
+  isEditing.value = false
+  editingId.value = null
+  form.value = defaultForm()
+  saveError.value = ''
+  generateKeys()
+  showModal.value = true
+}
+
+function openEditModal(tmpl) {
+  isEditing.value = true
+  editingId.value = tmpl.id
+  form.value = {
+    name: tmpl.name,
+    protocol: tmpl.protocol,
+    reality_server_name: tmpl.reality_server_name || 'www.amazon.com',
+    reality_dest: tmpl.reality_dest || 'www.amazon.com:443',
+    reality_private_key: tmpl.reality_private_key || '',
+    reality_public_key: tmpl.reality_public_key || '',
+    reality_short_id: tmpl.reality_short_id || '',
+    hy2_up_mbps: tmpl.hy2_up_mbps || 100,
+    hy2_down_mbps: tmpl.hy2_down_mbps || 100,
+    hy2_masquerade: tmpl.hy2_masquerade || 'https://bing.com',
+    is_default: !!tmpl.is_default,
+    is_system: tmpl.owner_id === null
+  }
+  saveError.value = ''
+  showModal.value = true
+}
+
+async function saveTemplate() {
+  saving.value = true
+  saveError.value = ''
+  try {
+    const payload = {
+      name: form.value.name.trim(),
+      protocol: form.value.protocol,
+      is_default: form.value.is_default ? 1 : 0,
+      is_system: form.value.is_system
+    }
+
+    if (form.value.protocol === 'vless') {
+      payload.reality_server_name = form.value.reality_server_name.trim()
+      payload.reality_dest = form.value.reality_dest.trim()
+      payload.reality_private_key = form.value.reality_private_key
+      payload.reality_public_key = form.value.reality_public_key
+      payload.reality_short_id = form.value.reality_short_id
+    } else if (form.value.protocol === 'hysteria2') {
+      payload.hy2_up_mbps = form.value.hy2_up_mbps
+      payload.hy2_down_mbps = form.value.hy2_down_mbps
+      payload.hy2_masquerade = form.value.hy2_masquerade.trim()
+    }
+
+    if (isEditing.value && editingId.value) {
+      await request(`/api/v1/templates/${editingId.value}`, {
+        method: 'PUT',
+        body: JSON.stringify(payload)
       })
-    })
-    saved.value = true
-    await loadTemplate()
+    } else {
+      await request('/api/v1/templates', {
+        method: 'POST',
+        body: JSON.stringify(payload)
+      })
+    }
+
+    showModal.value = false
+    await loadTemplates()
   } catch (err) {
     saveError.value = err.message || '保存模板失败'
   } finally {
@@ -351,7 +685,34 @@ async function saveTemplate() {
   }
 }
 
+async function deleteTemplate(tmpl) {
+  if (!confirm(`确定要删除协议模板 "${tmpl.name}" 吗？如果已有主机插槽绑定，需先解除绑定。`)) return
+  try {
+    await request(`/api/v1/templates/${tmpl.id}`, { method: 'DELETE' })
+    await loadTemplates()
+  } catch (err) {
+    alert(err.message || '删除模板失败')
+  }
+}
+
+function openSniModal() {
+  sniSearch.value = ''
+  showSniModal.value = true
+}
+
+function applyPresetAndClose(preset) {
+  form.value.reality_server_name = preset.sni
+  form.value.reality_dest = preset.dest
+  showSniModal.value = false
+}
+
+function copyText(txt) {
+  if (navigator.clipboard) {
+    navigator.clipboard.writeText(txt)
+  }
+}
+
 onMounted(() => {
-  loadTemplate()
+  loadTemplates()
 })
 </script>
