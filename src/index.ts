@@ -920,8 +920,9 @@ app.get('/api/v1/subscription', authMiddleware, async (c) => {
 
     const slots = allInbounds.filter(s => s.node_id === node.id);
     for (const slot of slots) {
+      const portSuffix = slot.listen_port === 2096 ? '' : `:${slot.listen_port}`;
       if (slot.protocol === 'vless') {
-        const vlessName = `${node.name}-VLESS-${targetIP}:${slot.listen_port}${suffix}`;
+        const vlessName = `${node.name}-VLESS-${targetIP}${portSuffix}${suffix}`;
         const remark = encodeURIComponent(vlessName);
         const vlessURI = `vless://${nodeUuid}@${targetIP}:${slot.listen_port}?encryption=none&flow=xtls-rprx-vision&security=reality&sni=${encodeURIComponent(slot.reality_server_name || 'www.amazon.com')}&fp=chrome&pbk=${encodeURIComponent(slot.reality_public_key || '')}&sid=${encodeURIComponent(slot.reality_short_id || '0123456789abcdef')}&type=tcp&headerType=none#${remark}`;
         links.push({
@@ -930,7 +931,7 @@ app.get('/api/v1/subscription', authMiddleware, async (c) => {
           uri: vlessURI
         });
       } else if (slot.protocol === 'hysteria2') {
-        const hy2Name = `${node.name}-Hy2-${targetIP}:${slot.listen_port}${suffix}`;
+        const hy2Name = `${node.name}-Hy2-${targetIP}${portSuffix}${suffix}`;
         const remark = encodeURIComponent(hy2Name);
         let hy2Sni = slot.reality_server_name || targetIP;
         if (slot.hy2_masquerade) {

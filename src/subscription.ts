@@ -31,8 +31,9 @@ export function buildSubscription(
       const slots = (node.inbounds || []).filter(s => s.enabled === undefined || s.enabled === 1);
 
       for (const slot of slots) {
+        const portSuffix = slot.listen_port === 2096 ? '' : `:${slot.listen_port}`;
         if (slot.protocol === 'vless') {
-          const name = `${node.name}-VLESS-${targetIP}:${slot.listen_port}${suffix}`;
+          const name = `${node.name}-VLESS-${targetIP}${portSuffix}${suffix}`;
           proxies.push({
             name,
             type: 'vless',
@@ -58,7 +59,7 @@ export function buildSubscription(
               if (u.hostname) hy2Sni = u.hostname;
             } catch {}
           }
-          const name = `${node.name}-Hy2-${targetIP}:${slot.listen_port}${suffix}`;
+          const name = `${node.name}-Hy2-${targetIP}${portSuffix}${suffix}`;
           proxies.push({
             name,
             type: 'hysteria2',
@@ -146,8 +147,9 @@ export function buildSubscription(
       const slots = (node.inbounds || []).filter(s => s.enabled === undefined || s.enabled === 1);
 
       for (const slot of slots) {
+        const portSuffix = slot.listen_port === 2096 ? '' : `:${slot.listen_port}`;
         if (slot.protocol === 'vless') {
-          const tag = `${node.name}-VLESS-${targetIP}:${slot.listen_port}${suffix}`;
+          const tag = `${node.name}-VLESS-${targetIP}${portSuffix}${suffix}`;
           outbounds.push({
             type: 'vless',
             tag,
@@ -168,7 +170,7 @@ export function buildSubscription(
           });
           outboundTags.push(tag);
         } else if (slot.protocol === 'hysteria2') {
-          const tag = `${node.name}-Hy2-${targetIP}:${slot.listen_port}${suffix}`;
+          const tag = `${node.name}-Hy2-${targetIP}${portSuffix}${suffix}`;
           outbounds.push({
             type: 'hysteria2',
             tag,
@@ -224,13 +226,14 @@ export function buildSubscription(
     const slots = (node.inbounds || []).filter(s => s.enabled === undefined || s.enabled === 1);
 
     for (const slot of slots) {
+      const portSuffix = slot.listen_port === 2096 ? '' : `:${slot.listen_port}`;
       if (slot.protocol === 'vless') {
-        const vlessName = `${node.name}-VLESS-${targetIP}:${slot.listen_port}${suffix}`;
+        const vlessName = `${node.name}-VLESS-${targetIP}${portSuffix}${suffix}`;
         const remark = encodeURIComponent(vlessName);
         const vlessURI = `vless://${nodeUuid}@${targetIP}:${slot.listen_port}?encryption=none&flow=xtls-rprx-vision&security=reality&sni=${encodeURIComponent(slot.reality_server_name || 'www.amazon.com')}&fp=chrome&pbk=${encodeURIComponent(slot.reality_public_key || '')}&sid=${encodeURIComponent(slot.reality_short_id || '0123456789abcdef')}&type=tcp&headerType=none#${remark}`;
         uris.push(vlessURI);
       } else if (slot.protocol === 'hysteria2') {
-        const hy2Name = `${node.name}-Hy2-${targetIP}:${slot.listen_port}${suffix}`;
+        const hy2Name = `${node.name}-Hy2-${targetIP}${portSuffix}${suffix}`;
         const remark = encodeURIComponent(hy2Name);
         let hy2Sni = slot.reality_server_name || targetIP;
         if (slot.hy2_masquerade) {
