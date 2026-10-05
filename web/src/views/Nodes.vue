@@ -195,8 +195,10 @@
                   :{{ node.proxy_port || 2096 }}
                 </div>
 
-                <div class="text-[10px] text-slate-500 font-sans mt-1">
-                  <span class="font-mono">singbox:{{ displayCoreVersion(node.core_version) }}</span>
+                <div class="text-[10px] text-slate-500 font-mono mt-1 flex items-center space-x-1.5 flex-wrap">
+                  <span>singbox:{{ displayCoreVersion(node.core_version) }}</span>
+                  <span v-if="node.agent_version" class="text-slate-600">|</span>
+                  <span v-if="node.agent_version" class="text-slate-400">node:{{ displayCoreVersion(node.agent_version) }}</span>
                 </div>
               </td>
 

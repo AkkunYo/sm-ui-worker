@@ -51,6 +51,7 @@ type SyncRequest struct {
 	MemoryPercent float64        `json:"memory_percent"`
 	UptimeSeconds int64          `json:"uptime_seconds"`
 	CoreVersion   string         `json:"core_version"`
+	AgentVersion  string         `json:"agent_version,omitempty"`
 	ConfigVersion int            `json:"config_version"`
 	ConfigHash    string         `json:"config_hash,omitempty"`
 	TrafficDeltas []TrafficDelta `json:"traffic_deltas,omitempty"`
@@ -203,7 +204,8 @@ func syncWithMaster(cfg Config, currentVer int) int {
 		CPUPercent:    cpu,
 		MemoryPercent: mem,
 		UptimeSeconds: uptime,
-		CoreVersion:   Version,
+		CoreVersion:   "v1.14.2",
+		AgentVersion:  Version,
 		ConfigVersion: currentVer,
 		ConfigHash:    currentHash,
 		TrafficDeltas: trafficDeltas,

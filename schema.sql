@@ -42,6 +42,7 @@ CREATE TABLE IF NOT EXISTS nodes (
   used_up_bytes INTEGER DEFAULT 0,
   used_down_bytes INTEGER DEFAULT 0,
   core_version TEXT DEFAULT 'v1.14.2',
+  agent_version TEXT DEFAULT '',
   config_version INTEGER DEFAULT 1,
   created_at TEXT DEFAULT (datetime('now')),
   updated_at TEXT DEFAULT (datetime('now')),

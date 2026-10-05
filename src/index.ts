@@ -277,7 +277,8 @@ app.post('/api/v1/node/sync', async (c) => {
       cpu_percent = ?,
       memory_percent = ?,
       uptime_seconds = ?,
-      core_version = ?
+      core_version = ?,
+      agent_version = ?
     WHERE id = ?
   `).bind(
     serverIP,
@@ -287,6 +288,7 @@ app.post('/api/v1/node/sync', async (c) => {
     body.memory_percent || 0,
     body.uptime_seconds || 0,
     body.core_version || 'v1.14.2',
+    body.agent_version || '',
     node.id
   ).run();
 

@@ -48,6 +48,8 @@ export interface NodeRecord {
   protocol?: string;
   token: string;
   status: string;
+  core_version?: string;
+  agent_version?: string;
   used_up_bytes?: number;
   used_down_bytes?: number;
   inbounds?: NodeInboundSlot[];
