@@ -2,10 +2,14 @@
 FROM golang:alpine AS builder
 WORKDIR /app
 ARG TARGETOS TARGETARCH
+ARG VERSION=dev
+ARG COMMIT=none
 COPY go.mod go.sum* ./
 RUN go mod download
 COPY main.go ./
-RUN CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH} go build -ldflags="-s -w" -o /bin/sm-node main.go
+RUN CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH} go build \
+    -ldflags="-s -w -X 'main.Version=${VERSION}' -X 'main.GitCommit=${COMMIT}'" \
+    -o /bin/sm-node main.go
 
 # Compile official sing-box 1.14.2 with with_v2ray_api build tag
 ARG SING_BOX_VERSION=1.14.2
