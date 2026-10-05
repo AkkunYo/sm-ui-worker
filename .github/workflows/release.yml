@@ -40,6 +40,7 @@ jobs:
           cd release-assets && sha256sum sm-node-linux-amd64.tar.gz sm-node-linux-arm64.tar.gz > sha256sums.txt
 
       - name: Create GitHub Release
+        if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:
           files: |
@@ -47,6 +48,7 @@ jobs:
             release-assets/sm-node-linux-arm64.tar.gz
             release-assets/sha256sums.txt
           name: SM-UI Worker ${{ github.ref_name }}
+          tag_name: ${{ github.ref_name }}
           draft: false
           prerelease: false
           generate_release_notes: true
