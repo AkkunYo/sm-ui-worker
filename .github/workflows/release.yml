@@ -26,14 +26,15 @@ jobs:
       - name: Setup Go
         uses: actions/setup-go@v5
         with:
-          go-version: '1.22'
+          go-version: '1.24'
           cache: true
+          cache-dependency-path: agent/go.sum
 
       - name: Compile sm-node
         run: |
           mkdir -p dist/amd64 dist/arm64 release-assets
-          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="-s -w" -o dist/amd64/sm-node ./agent/main.go
-          CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -ldflags="-s -w" -o dist/arm64/sm-node ./agent/main.go
+          (cd agent && CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="-s -w" -o ../dist/amd64/sm-node .)
+          (cd agent && CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -ldflags="-s -w" -o ../dist/arm64/sm-node .)
           tar -czf release-assets/sm-node-linux-amd64.tar.gz -C dist/amd64 sm-node
           tar -czf release-assets/sm-node-linux-arm64.tar.gz -C dist/arm64 sm-node
           cd release-assets && sha256sum sm-node-linux-amd64.tar.gz sm-node-linux-arm64.tar.gz > sha256sums.txt
