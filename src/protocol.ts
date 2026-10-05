@@ -194,3 +194,114 @@ export function buildServerConfig(
     }
   };
 }
+
+export interface ResolvedEndpoint {
+  id: string;
+  name: string;
+  protocol: 'vless' | 'hysteria2';
+  server: string;
+  port: number;
+  hopPorts?: string;
+  isHop?: boolean;
+  // VLESS Reality 字段
+  uuid?: string;
+  flow?: string;
+  realityServerName?: string;
+  realityPublicKey?: string;
+  realityShortId?: string;
+  // Hysteria 2 字段
+  password?: string;
+  sni?: string;
+  upMbps?: number;
+  downMbps?: number;
+  masquerade?: string | null;
+}
+
+/**
+ * 统一解析并构建节点的标准端点集合
+ * 收敛端口后缀命名规则、Hysteria2 SNI 规范化推导以及跳跃端口扩展
+ */
+export function resolveNodeEndpoints(
+  node: NodeRecord,
+  slots: NodeInboundSlot[],
+  credentials: { uuid: string; proxyPassword?: string },
+  tenantSuffix = ''
+): ResolvedEndpoint[] {
+  if (!node.server_ip) return [];
+  const ips = node.server_ip.split(',').map(s => s.trim()).filter(Boolean);
+  const targetIP = ips[0] || '';
+  if (!targetIP) return [];
+
+  const enabledSlots = (slots || []).filter(s => s.enabled === undefined || s.enabled === 1);
+  const endpoints: ResolvedEndpoint[] = [];
+
+  for (const slot of enabledSlots) {
+    const portSuffix = slot.listen_port === 2096 ? '' : `:${slot.listen_port}`;
+
+    if (slot.protocol === 'vless') {
+      const name = `${node.name}-VLESS-${targetIP}${portSuffix}${tenantSuffix}`;
+      endpoints.push({
+        id: `${node.id}-vless-${slot.listen_port}`,
+        name,
+        protocol: 'vless',
+        server: targetIP,
+        port: slot.listen_port,
+        uuid: credentials.uuid,
+        flow: 'xtls-rprx-vision',
+        realityServerName: slot.reality_server_name || 'www.amazon.com',
+        realityPublicKey: slot.reality_public_key || '',
+        realityShortId: slot.reality_short_id || '0123456789abcdef'
+      });
+    } else if (slot.protocol === 'hysteria2') {
+      // 统一从 masquerade 解析出干净的 hostname 作为 SNI，fallback 到 reality_server_name 或 IP
+      let hy2Sni = slot.reality_server_name || targetIP;
+      if (slot.hy2_masquerade) {
+        try {
+          const u = new URL(slot.hy2_masquerade.startsWith('http') ? slot.hy2_masquerade : `https://${slot.hy2_masquerade}`);
+          if (u.hostname) hy2Sni = u.hostname;
+        } catch {}
+      }
+
+      const upMbps = slot.hy2_up_mbps || 100;
+      const downMbps = slot.hy2_down_mbps || 100;
+      const password = credentials.proxyPassword || 'sm-ui-password';
+
+      const name = `${node.name}-Hy2-${targetIP}${portSuffix}${tenantSuffix}`;
+      endpoints.push({
+        id: `${node.id}-hy2-${slot.listen_port}`,
+        name,
+        protocol: 'hysteria2',
+        server: targetIP,
+        port: slot.listen_port,
+        password,
+        sni: hy2Sni,
+        upMbps,
+        downMbps,
+        masquerade: slot.hy2_masquerade
+      });
+
+      // Hysteria 2 端口跳跃端点扩展
+      if (slot.hop_ports && slot.hop_ports.trim()) {
+        const hopPortRange = slot.hop_ports.trim();
+        const hopName = `${node.name}-Hy2-Hop-${targetIP}${tenantSuffix}`;
+        endpoints.push({
+          id: `${node.id}-hy2-hop-${slot.listen_port}`,
+          name: hopName,
+          protocol: 'hysteria2',
+          server: targetIP,
+          port: slot.listen_port,
+          hopPorts: hopPortRange,
+          isHop: true,
+          password,
+          sni: hy2Sni,
+          upMbps,
+          downMbps,
+          masquerade: slot.hy2_masquerade
+        });
+      }
+    }
+  }
+
+  return endpoints;
+}
+

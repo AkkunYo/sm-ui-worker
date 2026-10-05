@@ -52,6 +52,7 @@ type SyncRequest struct {
 	UptimeSeconds int64          `json:"uptime_seconds"`
 	CoreVersion   string         `json:"core_version"`
 	ConfigVersion int            `json:"config_version"`
+	ConfigHash    string         `json:"config_hash,omitempty"`
 	TrafficDeltas []TrafficDelta `json:"traffic_deltas,omitempty"`
 }
 
@@ -64,6 +65,7 @@ type TrafficDelta struct {
 type SyncResponse struct {
 	Status        string          `json:"status"`
 	ConfigVersion int             `json:"config_version"`
+	ConfigHash    string          `json:"config_hash,omitempty"`
 	Reload        bool            `json:"reload"`
 	Config        json.RawMessage `json:"config,omitempty"`
 }
@@ -180,6 +182,9 @@ func syncWithMaster(cfg Config, currentVer int) int {
 		log.Printf("[Traffic] Captured deltas for %d users from sing-box", len(trafficDeltas))
 	}
 
+	currentHashBytes, _ := os.ReadFile(filepath.Join(cfg.BaseDir, "configs", "current.hash"))
+	currentHash := strings.TrimSpace(string(currentHashBytes))
+
 	reqPayload := SyncRequest{
 		Token:         cfg.NodeToken,
 		Status:        nodeStatus,
@@ -189,6 +194,7 @@ func syncWithMaster(cfg Config, currentVer int) int {
 		UptimeSeconds: uptime,
 		CoreVersion:   "v1.14.2",
 		ConfigVersion: currentVer,
+		ConfigHash:    currentHash,
 		TrafficDeltas: trafficDeltas,
 	}
 
@@ -225,8 +231,8 @@ func syncWithMaster(cfg Config, currentVer int) int {
 	}
 
 	if syncResp.Reload && len(syncResp.Config) > 0 {
-		log.Printf("[Sync] New configuration received (version: %d). Applying...", syncResp.ConfigVersion)
-		if err := applyConfiguration(cfg.BaseDir, syncResp.Config); err != nil {
+		log.Printf("[Sync] New configuration received (version: %d, hash: %s). Applying...", syncResp.ConfigVersion, syncResp.ConfigHash)
+		if err := applyConfiguration(cfg.BaseDir, syncResp.Config, syncResp.ConfigHash); err != nil {
 			log.Printf("[Sync] Failed to apply configuration: %v", err)
 		} else {
 			log.Printf("[Sync] Configuration v%d applied successfully!", syncResp.ConfigVersion)
@@ -237,9 +243,10 @@ func syncWithMaster(cfg Config, currentVer int) int {
 	return syncResp.ConfigVersion
 }
 
-func applyConfiguration(baseDir string, configBytes []byte) error {
+func applyConfiguration(baseDir string, configBytes []byte, configHash string) error {
 	nextPath := filepath.Join(baseDir, "configs", "next.json")
 	currentPath := filepath.Join(baseDir, "configs", "current.json")
+	hashPath := filepath.Join(baseDir, "configs", "current.hash")
 	binPath := filepath.Join(baseDir, "bin", "sing-box")
 
 	if err := os.WriteFile(nextPath, configBytes, 0644); err != nil {
@@ -254,9 +261,14 @@ func applyConfiguration(baseDir string, configBytes []byte) error {
 		}
 	}
 
-	// Atomic swap
+	// Atomic swap config
 	if err := os.Rename(nextPath, currentPath); err != nil {
 		return err
+	}
+
+	// Persist active config hash for future heartbeat reporting
+	if configHash != "" {
+		_ = os.WriteFile(hashPath, []byte(configHash), 0644)
 	}
 
 	// Reload or Start
@@ -762,4 +774,3 @@ func queryTrafficDeltas() []TrafficDelta {
 	}
 	return result
 }
-
