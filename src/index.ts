@@ -3,7 +3,7 @@ import { sign, verify } from 'hono/jwt';
 import { ensureInitialDefaults, getJwtSecret, isSetupCompleted, type Env } from './db';
 import { generateRealityKeyPair, generateToken, generateUUID } from './keys';
 import { loginGuardKeys, getLockRemaining, recordLoginFailure, clearLoginFailures } from './login-guard';
-import { buildServerConfig, isUserActive, resolveNodeEndpoints, type NodeRecord, type InboundTemplateRecord, type NodeInboundSlot, type UserRecord } from './protocol';
+import { buildServerConfig, buildEndpointsForUser, isUserActive, type NodeRecord, type InboundTemplateRecord, type NodeInboundSlot, type UserRecord } from './protocol';
 import { buildSubscription, toUriString } from './subscription';
 import { getInboundsForServer, getInboundsForSubscription } from './repo/inbounds';
 
@@ -343,6 +343,12 @@ app.post('/api/v1/node/sync', async (c) => {
   const globalVersion = await getConfigVersion(c.env.DB);
   const clientConfigVersion = body.config_version || 0;
   const clientConfigHash = typeof body.config_hash === 'string' ? body.config_hash.trim() : '';
+  const versionBehind = clientConfigVersion < globalVersion || node.config_version < globalVersion;
+
+  // Legacy agent (no hash) that is up to date: skip config generation entirely
+  if (!clientConfigHash && !versionBehind) {
+    return c.json({ status: 'ok', config_version: globalVersion, reload: false });
+  }
 
   const ownerUser = await c.env.DB.prepare('SELECT * FROM users WHERE id = ?').bind(node.owner_id).first<UserRecord>();
   const slots = await getInboundsForServer(c.env.DB, node.id);
@@ -352,15 +358,8 @@ app.post('/api/v1/node/sync', async (c) => {
   const config = buildServerConfig(node, slots, authUsers);
   const configHash = await sha256Hex(JSON.stringify(config));
 
-  // Determine whether reload is required
-  let shouldReload = false;
-  if (clientConfigHash) {
-    // New hash-driven mode: reload strictly when actual config payload has changed
-    shouldReload = clientConfigHash !== configHash;
-  } else {
-    // Legacy compatibility mode: reload based on global config version
-    shouldReload = clientConfigVersion < globalVersion || node.config_version < globalVersion;
-  }
+  // Hash-driven agents reload only when payload changed; legacy agents reaching here are version-behind
+  const shouldReload = clientConfigHash ? clientConfigHash !== configHash : true;
 
   if (shouldReload) {
     await c.env.DB.prepare('UPDATE nodes SET config_version = ? WHERE id = ?').bind(globalVersion, node.id).run();
@@ -922,24 +921,11 @@ app.get('/api/v1/subscription', authMiddleware, async (c) => {
   const nodeIds = nodes.map(n => n.id);
   const allInbounds = await getInboundsForSubscription(c.env.DB, nodeIds);
 
-  const links: Array<{ name: string; protocol: string; uri: string }> = [];
-  for (const node of nodes) {
-    const tenantSuffix = isAllMode && node.owner_username ? ` [${node.owner_username}]` : '';
-    const creds = {
-      uuid: (isAllMode && node.owner_uuid) ? node.owner_uuid : user.uuid,
-      proxyPassword: (isAllMode && node.owner_proxy_password) ? node.owner_proxy_password : (user.proxy_password || 'sm-ui-password')
-    };
-
-    const slots = allInbounds.filter(s => s.node_id === node.id);
-    const eps = resolveNodeEndpoints(node, slots, creds, tenantSuffix);
-    for (const ep of eps) {
-      links.push({
-        name: ep.name,
-        protocol: ep.protocol === 'hysteria2' ? 'hy2' : 'vless',
-        uri: toUriString(ep)
-      });
-    }
-  }
+  const links = buildEndpointsForUser(user, nodes, allInbounds, isAllMode).map(ep => ({
+    name: ep.name,
+    protocol: ep.protocol === 'hysteria2' ? 'hy2' : 'vless',
+    uri: toUriString(ep)
+  }));
 
   return c.json({
     profile: toPublicProfile(user),
@@ -1073,16 +1059,9 @@ async function handleSubscription(c: AppContext, usernameParam?: string, tokenPa
   const nodeIds = nodes.map(n => n.id);
   const allInbounds = await getInboundsForSubscription(c.env.DB, nodeIds);
 
-  const mappedNodes = nodes.map(n => ({
-    ...n,
-    owner_username: isAllMode ? (n as any).owner_username : undefined,
-    owner_uuid: isAllMode ? (n as any).owner_uuid : undefined,
-    owner_proxy_password: isAllMode ? (n as any).owner_proxy_password : undefined,
-    inbounds: allInbounds.filter(s => s.node_id === n.id)
-  }));
-
+  const endpoints = buildEndpointsForUser(user, nodes, allInbounds, isAllMode);
   const userAgent = c.req.header('User-Agent') || '';
-  const sub = buildSubscription(user, mappedNodes, userAgent);
+  const sub = buildSubscription(user, endpoints, userAgent);
 
   for (const [k, v] of Object.entries(sub.headers)) {
     c.header(k, v);

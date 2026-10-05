@@ -1,5 +1,5 @@
 import { stringify } from 'yaml';
-import { resolveNodeEndpoints, type NodeRecord, type ResolvedEndpoint, type UserRecord } from './protocol';
+import type { ResolvedEndpoint, UserRecord } from './protocol';
 
 /**
  * 序列化为 Clash/Mihomo/Stash 代理对象
@@ -91,7 +91,7 @@ export function toUriString(ep: ResolvedEndpoint): string {
   const remark = encodeURIComponent(ep.name);
 
   if (ep.protocol === 'vless') {
-    return `vless://${ep.uuid}@${ep.server}:${ep.port}?encryption=none&flow=xtls-rprx-vision&security=reality&sni=${encodeURIComponent(ep.realityServerName || 'www.amazon.com')}&fp=chrome&pbk=${encodeURIComponent(ep.realityPublicKey || '')}&sid=${encodeURIComponent(ep.realityShortId || '0123456789abcdef')}&type=tcp&headerType=none#${remark}`;
+    return `vless://${ep.uuid}@${ep.server}:${ep.port}?encryption=none&flow=${encodeURIComponent(ep.flow || 'xtls-rprx-vision')}&security=reality&sni=${encodeURIComponent(ep.realityServerName || 'www.amazon.com')}&fp=chrome&pbk=${encodeURIComponent(ep.realityPublicKey || '')}&sid=${encodeURIComponent(ep.realityShortId || '0123456789abcdef')}&type=tcp&headerType=none#${remark}`;
   }
 
   // hysteria2
@@ -104,31 +104,16 @@ export function toUriString(ep: ResolvedEndpoint): string {
 
 export function buildSubscription(
   user: UserRecord & { used_up_bytes: number; used_down_bytes: number; traffic_limit_bytes: number; expire_at?: string | null },
-  nodes: NodeRecord[],
+  allEndpoints: ResolvedEndpoint[],
   userAgent: string
 ): { contentType: string; body: string; headers: Record<string, string> } {
   const ua = (userAgent || '').toLowerCase();
-
-  // 严格过滤仅包含在线或非禁用且具有 IP 的节点
-  const activeNodes = nodes.filter(n => n.status !== 'disabled' && n.server_ip);
 
   // 响应头流量及限额提示
   const subHeaders: Record<string, string> = {
     'Profile-Update-Interval': '12',
     'Subscription-Userinfo': `upload=${user.used_up_bytes || 0}; download=${user.used_down_bytes || 0}; total=${user.traffic_limit_bytes || 0}; expire=${user.expire_at ? Math.floor(new Date(user.expire_at).getTime() / 1000) : 0}`
   };
-
-  // 集中解析所有节点的标准端点集合
-  const allEndpoints: ResolvedEndpoint[] = [];
-  for (const node of activeNodes) {
-    const tenantSuffix = node.owner_username ? ` [${node.owner_username}]` : '';
-    const creds = {
-      uuid: node.owner_uuid || user.uuid,
-      proxyPassword: node.owner_proxy_password || user.proxy_password || user.password || ''
-    };
-    const eps = resolveNodeEndpoints(node, node.inbounds || [], creds, tenantSuffix);
-    allEndpoints.push(...eps);
-  }
 
   // 1. Mihomo / Clash format
   if (ua.includes('clash') || ua.includes('mihomo') || ua.includes('stash')) {

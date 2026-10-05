@@ -196,7 +196,6 @@ export function buildServerConfig(
 }
 
 export interface ResolvedEndpoint {
-  id: string;
   name: string;
   protocol: 'vless' | 'hysteria2';
   server: string;
@@ -214,7 +213,6 @@ export interface ResolvedEndpoint {
   sni?: string;
   upMbps?: number;
   downMbps?: number;
-  masquerade?: string | null;
 }
 
 /**
@@ -241,7 +239,6 @@ export function resolveNodeEndpoints(
     if (slot.protocol === 'vless') {
       const name = `${node.name}-VLESS-${targetIP}${portSuffix}${tenantSuffix}`;
       endpoints.push({
-        id: `${node.id}-vless-${slot.listen_port}`,
         name,
         protocol: 'vless',
         server: targetIP,
@@ -268,7 +265,6 @@ export function resolveNodeEndpoints(
 
       const name = `${node.name}-Hy2-${targetIP}${portSuffix}${tenantSuffix}`;
       endpoints.push({
-        id: `${node.id}-hy2-${slot.listen_port}`,
         name,
         protocol: 'hysteria2',
         server: targetIP,
@@ -276,8 +272,7 @@ export function resolveNodeEndpoints(
         password,
         sni: hy2Sni,
         upMbps,
-        downMbps,
-        masquerade: slot.hy2_masquerade
+        downMbps
       });
 
       // Hysteria 2 端口跳跃端点扩展
@@ -285,7 +280,6 @@ export function resolveNodeEndpoints(
         const hopPortRange = slot.hop_ports.trim();
         const hopName = `${node.name}-Hy2-Hop-${targetIP}${tenantSuffix}`;
         endpoints.push({
-          id: `${node.id}-hy2-hop-${slot.listen_port}`,
           name: hopName,
           protocol: 'hysteria2',
           server: targetIP,
@@ -295,13 +289,43 @@ export function resolveNodeEndpoints(
           password,
           sni: hy2Sni,
           upMbps,
-          downMbps,
-          masquerade: slot.hy2_masquerade
+          downMbps
         });
       }
     }
   }
 
+  return endpoints;
+}
+
+/**
+ * 为某个用户组装全部订阅端点（Web 控制台与客户端订阅共用）
+ * - 过滤已禁用及无 IP 的节点
+ * - isAllMode 下使用节点真实归属租户的凭据并追加 [租户] 后缀
+ * - 密码回退顺序与 buildServerConfig 保持一致，避免 Hy2 认证不匹配
+ */
+export function buildEndpointsForUser(
+  user: UserRecord,
+  nodes: NodeRecord[],
+  slots: NodeInboundSlot[],
+  isAllMode: boolean
+): ResolvedEndpoint[] {
+  const endpoints: ResolvedEndpoint[] = [];
+  for (const node of nodes) {
+    if (node.status === 'disabled' || !node.server_ip) continue;
+
+    const useOwner = isAllMode && !!node.owner_uuid;
+    const tenantSuffix = isAllMode && node.owner_username ? ` [${node.owner_username}]` : '';
+    const creds = {
+      uuid: useOwner ? node.owner_uuid! : user.uuid,
+      proxyPassword: useOwner
+        ? (node.owner_proxy_password || 'sm-ui-password')
+        : (user.proxy_password || user.password || 'sm-ui-password')
+    };
+
+    const nodeSlots = slots.filter(s => s.node_id === node.id);
+    endpoints.push(...resolveNodeEndpoints(node, nodeSlots, creds, tenantSuffix));
+  }
   return endpoints;
 }
 
