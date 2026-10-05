@@ -71,6 +71,11 @@ type SyncResponse struct {
 }
 
 var (
+	// Version metadata injected at compile time via -ldflags "-X"
+	Version   = "dev"
+	GitCommit = "none"
+	BuildTime = "unknown"
+
 	procMu      sync.Mutex
 	singBoxCmd  *exec.Cmd
 	cpuMu       sync.Mutex
@@ -80,11 +85,17 @@ var (
 
 func main() {
 	var cfg Config
+	showVersion := flag.Bool("version", false, "Print agent version and exit")
 	flag.StringVar(&cfg.MasterURL, "master", os.Getenv("MASTER_URL"), "Cloudflare Worker Master API URL (e.g. https://sm-ui.your-worker.workers.dev)")
 	flag.StringVar(&cfg.NodeToken, "token", os.Getenv("NODE_TOKEN"), "Node HostId Token UUID")
 	flag.StringVar(&cfg.BaseDir, "dir", "/var/lib/sm-ui", "Base directory for runtime configs and certs")
 	intervalSec := flag.Int("interval", 30, "Sync polling interval in seconds")
 	flag.Parse()
+
+	if *showVersion {
+		fmt.Printf("sm-node version %s (commit: %s, built: %s)\n", Version, GitCommit, BuildTime)
+		os.Exit(0)
+	}
 
 	if envDir := os.Getenv("BASE_DIR"); envDir != "" {
 		cfg.BaseDir = envDir
@@ -103,7 +114,7 @@ func main() {
 	cfg.MasterURL = strings.TrimRight(cfg.MasterURL, "/")
 
 	log.Printf("==================================================")
-	log.Printf("  SM-UI Node Agent (Cloudflare Scheme A Pull)")
+	log.Printf("  SM-UI Node Agent %s (%s)", Version, GitCommit)
 	log.Printf("  Master URL: %s", cfg.MasterURL)
 	log.Printf("  Token UUID: %s***", cfg.NodeToken[:min(6, len(cfg.NodeToken))])
 	log.Printf("  Base Dir:   %s", cfg.BaseDir)
@@ -192,7 +203,7 @@ func syncWithMaster(cfg Config, currentVer int) int {
 		CPUPercent:    cpu,
 		MemoryPercent: mem,
 		UptimeSeconds: uptime,
-		CoreVersion:   "v1.14.2",
+		CoreVersion:   Version,
 		ConfigVersion: currentVer,
 		ConfigHash:    currentHash,
 		TrafficDeltas: trafficDeltas,

@@ -32,8 +32,10 @@ jobs:
       - name: Compile sm-node
         run: |
           mkdir -p dist/amd64 dist/arm64 release-assets
-          (cd agent && CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="-s -w" -o ../dist/amd64/sm-node .)
-          (cd agent && CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -ldflags="-s -w" -o ../dist/arm64/sm-node .)
+          BUILD_TIME=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+          LDFLAGS="-s -w -X 'main.Version=${{ github.ref_name }}' -X 'main.GitCommit=${{ github.sha }}' -X 'main.BuildTime=${BUILD_TIME}'"
+          (cd agent && CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="${LDFLAGS}" -o ../dist/amd64/sm-node .)
+          (cd agent && CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -ldflags="${LDFLAGS}" -o ../dist/arm64/sm-node .)
           tar -czf release-assets/sm-node-linux-amd64.tar.gz -C dist/amd64 sm-node
           tar -czf release-assets/sm-node-linux-arm64.tar.gz -C dist/arm64 sm-node
           cd release-assets && sha256sum sm-node-linux-amd64.tar.gz sm-node-linux-arm64.tar.gz > sha256sums.txt
@@ -90,6 +92,9 @@ jobs:
           file: ./agent/Dockerfile
           platforms: linux/amd64,linux/arm64
           push: true
+          build-args: |
+            VERSION=${{ github.ref_name }}
+            COMMIT=${{ github.sha }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
