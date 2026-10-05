@@ -266,12 +266,22 @@ func applyConfiguration(baseDir string, configBytes []byte, configHash string) e
 		return err
 	}
 
-	// Persist active config hash for future heartbeat reporting
-	if configHash != "" {
-		_ = os.WriteFile(hashPath, []byte(configHash), 0644)
+	// Reload or Start
+	if err := reloadSingBox(baseDir, currentPath); err != nil {
+		return err
 	}
 
-	// Reload or Start
+	// Persist active config hash only after sing-box has actually picked up the new config,
+	// so a failed reload is retried on the next heartbeat instead of being reported as applied.
+	if configHash != "" {
+		if err := writeFileAtomic(hashPath, []byte(configHash), 0644); err != nil {
+			log.Printf("[Sync] Failed to persist config hash: %v", err)
+		}
+	}
+	return nil
+}
+
+func reloadSingBox(baseDir, currentPath string) error {
 	procMu.Lock()
 	defer procMu.Unlock()
 
@@ -286,6 +296,15 @@ func applyConfiguration(baseDir string, configBytes []byte, configHash string) e
 	}
 
 	return startSingBoxLocked(baseDir, currentPath)
+}
+
+// writeFileAtomic writes to a temp file and renames it into place
+func writeFileAtomic(path string, data []byte, perm os.FileMode) error {
+	tmpPath := path + ".tmp"
+	if err := os.WriteFile(tmpPath, data, perm); err != nil {
+		return err
+	}
+	return os.Rename(tmpPath, path)
 }
 
 func startSingBox(baseDir, configPath string) error {
