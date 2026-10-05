@@ -58,12 +58,16 @@ async function verifyPassword(password: string, storedHash: string): Promise<boo
 }
 
 // Global config version helper
+// Atomic increment in a single statement to avoid lost updates under concurrent writes
 async function bumpConfigVersion(db: D1Database): Promise<number> {
-  const row = await db.prepare("SELECT value FROM system_settings WHERE key = 'config_version'").first<{ value: string }>();
-  const current = row ? parseInt(row.value, 10) || 1 : 1;
-  const next = current + 1;
-  await db.prepare("INSERT OR REPLACE INTO system_settings (key, value) VALUES ('config_version', ?)").bind(next.toString()).run();
-  return next;
+  const row = await db.prepare(`
+    INSERT INTO system_settings (key, value) VALUES ('config_version', '2')
+    ON CONFLICT(key) DO UPDATE SET
+      value = CAST(CAST(value AS INTEGER) + 1 AS TEXT),
+      updated_at = datetime('now')
+    RETURNING value
+  `).first<{ value: string }>();
+  return parseInt(row?.value || '2', 10);
 }
 
 async function getConfigVersion(db: D1Database): Promise<number> {
@@ -259,7 +263,7 @@ app.post('/api/v1/node/sync', async (c) => {
   // Update node runtime metrics
   await c.env.DB.prepare(`
     UPDATE nodes SET
-      status = 'online',
+      status = CASE WHEN status = 'disabled' THEN 'disabled' ELSE 'online' END,
       server_ip = ?,
       last_heartbeat_at = ?,
       rtt_ms = ?,
@@ -345,18 +349,17 @@ app.post('/api/v1/node/sync', async (c) => {
       ORDER BY ni.listen_port ASC, ni.id ASC
     `).bind(node.id).all<NodeInboundSlot>()).results;
 
-    if (ownerUser && slots && slots.length > 0) {
-      // STRICT ISOLATION: Node only authorizes its genuine owner user!
-      const authUsers: UserRecord[] = [ownerUser];
-      const config = buildServerConfig(node, slots, authUsers);
-      await c.env.DB.prepare('UPDATE nodes SET config_version = ? WHERE id = ?').bind(globalVersion, node.id).run();
-      return c.json({
-        status: 'ok',
-        config_version: globalVersion,
-        reload: true,
-        config
-      });
-    }
+    // Always push config when behind, even with zero slots, so removing all slots actually closes ports.
+    // STRICT ISOLATION: Node only authorizes its genuine owner user!
+    const authUsers: UserRecord[] = ownerUser ? [ownerUser] : [];
+    const config = buildServerConfig(node, slots || [], authUsers);
+    await c.env.DB.prepare('UPDATE nodes SET config_version = ? WHERE id = ?').bind(globalVersion, node.id).run();
+    return c.json({
+      status: 'ok',
+      config_version: globalVersion,
+      reload: true,
+      config
+    });
   }
 
   return c.json({
@@ -858,6 +861,19 @@ app.get('/api/v1/template/generate-keys', authMiddleware, async (c) => {
 // 6. Subscriptions & Traffic
 // ==========================================
 
+// Whitelist of user fields safe to expose to the web console (no password_hash / proxy credentials)
+const toPublicProfile = (u: any) => ({
+  id: u.id,
+  username: u.username,
+  role: u.role,
+  sub_token: u.sub_token,
+  status: u.status,
+  traffic_limit_bytes: u.traffic_limit_bytes,
+  used_up_bytes: u.used_up_bytes,
+  used_down_bytes: u.used_down_bytes,
+  expire_at: u.expire_at
+});
+
 app.get('/api/v1/subscription', authMiddleware, async (c) => {
   const currentUser = c.get('user') as JwtUser;
   const targetUserId = (currentUser.role === 'admin' && c.req.query('user_id'))
@@ -965,7 +981,7 @@ app.get('/api/v1/subscription', authMiddleware, async (c) => {
   }
 
   return c.json({
-    profile: user,
+    profile: toPublicProfile(user),
     active,
     links,
     mode: isAllMode ? 'all' : (targetUserId !== currentUser.userId ? 'preview' : 'personal')
@@ -1080,17 +1096,17 @@ async function handleSubscription(c: AppContext, usernameParam?: string, tokenPa
 
   let nodes: any[] = [];
   if (isAllMode) {
-    // Admin God-mode: query all online nodes across all tenants with genuine tenant credentials
+    // Admin God-mode: all non-disabled nodes across all tenants with genuine tenant credentials
     nodes = (await c.env.DB.prepare(`
       SELECT n.*, u.username as owner_username, u.uuid as owner_uuid, u.proxy_password as owner_proxy_password
       FROM nodes n
       JOIN users u ON n.owner_id = u.id
-      WHERE n.status = 'online'
+      WHERE n.status != 'disabled'
       ORDER BY n.owner_id ASC, n.id ASC
     `).all<any>()).results;
   } else {
-    // ONLY online nodes owned by this user!
-    nodes = (await c.env.DB.prepare("SELECT * FROM nodes WHERE owner_id = ? AND status = 'online'").bind(user.id).all<NodeRecord>()).results;
+    // Non-disabled nodes owned by this user (offline nodes stay listed; admins disable/delete to remove)
+    nodes = (await c.env.DB.prepare("SELECT * FROM nodes WHERE owner_id = ? AND status != 'disabled'").bind(user.id).all<NodeRecord>()).results;
   }
 
   const nodeIds = nodes.map(n => n.id);
