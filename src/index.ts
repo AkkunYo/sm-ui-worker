@@ -3,8 +3,9 @@ import { sign, verify } from 'hono/jwt';
 import { ensureInitialDefaults, getJwtSecret, isSetupCompleted, type Env } from './db';
 import { generateRealityKeyPair, generateToken, generateUUID } from './keys';
 import { loginGuardKeys, getLockRemaining, recordLoginFailure, clearLoginFailures } from './login-guard';
-import { buildServerConfig, isUserActive, type NodeRecord, type InboundTemplateRecord, type NodeInboundSlot, type UserRecord } from './protocol';
-import { buildSubscription } from './subscription';
+import { buildServerConfig, isUserActive, resolveNodeEndpoints, type NodeRecord, type InboundTemplateRecord, type NodeInboundSlot, type UserRecord } from './protocol';
+import { buildSubscription, toUriString } from './subscription';
+import { getInboundsForServer, getInboundsForSubscription } from './repo/inbounds';
 
 interface JwtUser {
   userId: number;
@@ -55,6 +56,12 @@ async function verifyPassword(password: string, storedHash: string): Promise<boo
     256
   );
   return crypto.subtle.timingSafeEqual(new Uint8Array(derived), expected);
+}
+
+async function sha256Hex(text: string): Promise<string> {
+  const enc = new TextEncoder();
+  const digest = await crypto.subtle.digest('SHA-256', enc.encode(text));
+  return Array.from(new Uint8Array(digest)).map(b => b.toString(16).padStart(2, '0')).join('');
 }
 
 // Global config version helper
@@ -332,31 +339,35 @@ app.post('/api/v1/node/sync', async (c) => {
     `).bind(nodeDeltaUp, nodeDeltaDown, node.id).run();
   }
 
-  // Check if config needs reload
+  // Check if config needs reload via dual-track: hash-based when client reports config_hash, otherwise version-based
   const globalVersion = await getConfigVersion(c.env.DB);
   const clientConfigVersion = body.config_version || 0;
+  const clientConfigHash = typeof body.config_hash === 'string' ? body.config_hash.trim() : '';
 
-  if (clientConfigVersion < globalVersion || node.config_version < globalVersion) {
-    const ownerUser = await c.env.DB.prepare('SELECT * FROM users WHERE id = ?').bind(node.owner_id).first<UserRecord>();
-    const slots = (await c.env.DB.prepare(`
-      SELECT ni.id, ni.node_id, ni.template_id, ni.listen_port, ni.hop_ports, ni.enabled,
-             it.name as template_name, it.protocol,
-             it.reality_dest, it.reality_server_name, it.reality_private_key, it.reality_public_key, it.reality_short_id,
-             it.hy2_up_mbps, it.hy2_down_mbps, it.hy2_masquerade
-      FROM node_inbounds ni
-      JOIN inbound_templates it ON ni.template_id = it.id
-      WHERE ni.node_id = ? AND (ni.enabled IS NULL OR ni.enabled = 1)
-      ORDER BY ni.listen_port ASC, ni.id ASC
-    `).bind(node.id).all<NodeInboundSlot>()).results;
+  const ownerUser = await c.env.DB.prepare('SELECT * FROM users WHERE id = ?').bind(node.owner_id).first<UserRecord>();
+  const slots = await getInboundsForServer(c.env.DB, node.id);
 
-    // Always push config when behind, even with zero slots, so removing all slots actually closes ports.
-    // STRICT ISOLATION: Node only authorizes its genuine owner user!
-    const authUsers: UserRecord[] = ownerUser ? [ownerUser] : [];
-    const config = buildServerConfig(node, slots || [], authUsers);
+  // STRICT ISOLATION: Node only authorizes its genuine owner user!
+  const authUsers: UserRecord[] = ownerUser ? [ownerUser] : [];
+  const config = buildServerConfig(node, slots, authUsers);
+  const configHash = await sha256Hex(JSON.stringify(config));
+
+  // Determine whether reload is required
+  let shouldReload = false;
+  if (clientConfigHash) {
+    // New hash-driven mode: reload strictly when actual config payload has changed
+    shouldReload = clientConfigHash !== configHash;
+  } else {
+    // Legacy compatibility mode: reload based on global config version
+    shouldReload = clientConfigVersion < globalVersion || node.config_version < globalVersion;
+  }
+
+  if (shouldReload) {
     await c.env.DB.prepare('UPDATE nodes SET config_version = ? WHERE id = ?').bind(globalVersion, node.id).run();
     return c.json({
       status: 'ok',
       config_version: globalVersion,
+      config_hash: configHash,
       reload: true,
       config
     });
@@ -365,6 +376,7 @@ app.post('/api/v1/node/sync', async (c) => {
   return c.json({
     status: 'ok',
     config_version: globalVersion,
+    config_hash: configHash,
     reload: false
   });
 });
@@ -908,75 +920,24 @@ app.get('/api/v1/subscription', authMiddleware, async (c) => {
   }
 
   const nodeIds = nodes.map(n => n.id);
-  let allInbounds: any[] = [];
-  if (nodeIds.length > 0) {
-    const placeholders = nodeIds.map(() => '?').join(',');
-    allInbounds = (await c.env.DB.prepare(`
-      SELECT ni.id, ni.node_id, ni.template_id, ni.listen_port, ni.hop_ports, ni.enabled,
-             it.name as template_name, it.protocol,
-             it.reality_dest, it.reality_server_name, it.reality_private_key, it.reality_public_key, it.reality_short_id,
-             it.hy2_up_mbps, it.hy2_down_mbps, it.hy2_masquerade
-      FROM node_inbounds ni
-      JOIN inbound_templates it ON ni.template_id = it.id
-      WHERE ni.node_id IN (${placeholders}) AND (ni.enabled IS NULL OR ni.enabled = 1)
-      ORDER BY ni.listen_port ASC, ni.id ASC
-    `).bind(...nodeIds).all<any>()).results;
-  }
+  const allInbounds = await getInboundsForSubscription(c.env.DB, nodeIds);
 
   const links: Array<{ name: string; protocol: string; uri: string }> = [];
   for (const node of nodes) {
-    if (!node.server_ip) continue;
-    const ips = node.server_ip.split(',').map((s: string) => s.trim()).filter(Boolean);
-    const targetIP = ips[0] || '';
-    if (!targetIP) continue;
-
-    const suffix = isAllMode && node.owner_username ? ` [${node.owner_username}]` : '';
-    const nodeUuid = (isAllMode && node.owner_uuid) ? node.owner_uuid : user.uuid;
-    const nodePassword = (isAllMode && node.owner_proxy_password) ? node.owner_proxy_password : (user.proxy_password || 'sm-ui-password');
+    const tenantSuffix = isAllMode && node.owner_username ? ` [${node.owner_username}]` : '';
+    const creds = {
+      uuid: (isAllMode && node.owner_uuid) ? node.owner_uuid : user.uuid,
+      proxyPassword: (isAllMode && node.owner_proxy_password) ? node.owner_proxy_password : (user.proxy_password || 'sm-ui-password')
+    };
 
     const slots = allInbounds.filter(s => s.node_id === node.id);
-    for (const slot of slots) {
-      const portSuffix = slot.listen_port === 2096 ? '' : `:${slot.listen_port}`;
-      if (slot.protocol === 'vless') {
-        const vlessName = `${node.name}-VLESS-${targetIP}${portSuffix}${suffix}`;
-        const remark = encodeURIComponent(vlessName);
-        const vlessURI = `vless://${nodeUuid}@${targetIP}:${slot.listen_port}?encryption=none&flow=xtls-rprx-vision&security=reality&sni=${encodeURIComponent(slot.reality_server_name || 'www.amazon.com')}&fp=chrome&pbk=${encodeURIComponent(slot.reality_public_key || '')}&sid=${encodeURIComponent(slot.reality_short_id || '0123456789abcdef')}&type=tcp&headerType=none#${remark}`;
-        links.push({
-          name: vlessName,
-          protocol: 'vless',
-          uri: vlessURI
-        });
-      } else if (slot.protocol === 'hysteria2') {
-        const hy2Name = `${node.name}-Hy2-${targetIP}${portSuffix}${suffix}`;
-        const remark = encodeURIComponent(hy2Name);
-        let hy2Sni = slot.reality_server_name || targetIP;
-        if (slot.hy2_masquerade) {
-          try {
-            const u = new URL(slot.hy2_masquerade.startsWith('http') ? slot.hy2_masquerade : `https://${slot.hy2_masquerade}`);
-            if (u.hostname) hy2Sni = u.hostname;
-          } catch {}
-        }
-        const upMbps = slot.hy2_up_mbps || 100;
-        const downMbps = slot.hy2_down_mbps || 100;
-        const hy2URI = `hysteria2://${encodeURIComponent(nodePassword)}@${targetIP}:${slot.listen_port}?alpn=h3&insecure=1&allowInsecure=1&sni=${encodeURIComponent(hy2Sni)}&upmbps=${upMbps}&downmbps=${downMbps}#${remark}`;
-        links.push({
-          name: hy2Name,
-          protocol: 'hy2',
-          uri: hy2URI
-        });
-
-        if (slot.hop_ports && slot.hop_ports.trim()) {
-          const hopName = `${node.name}-Hy2-Hop-${targetIP}${suffix}`;
-          const hopRemark = encodeURIComponent(hopName);
-          const hopPortRange = slot.hop_ports.trim();
-          const hopURI = `hysteria2://${encodeURIComponent(nodePassword)}@${targetIP}:${hopPortRange}?alpn=h3&insecure=1&allowInsecure=1&mport=${encodeURIComponent(hopPortRange)}&sni=${encodeURIComponent(hy2Sni)}&upmbps=${upMbps}&downmbps=${downMbps}#${hopRemark}`;
-          links.push({
-            name: hopName,
-            protocol: 'hy2',
-            uri: hopURI
-          });
-        }
-      }
+    const eps = resolveNodeEndpoints(node, slots, creds, tenantSuffix);
+    for (const ep of eps) {
+      links.push({
+        name: ep.name,
+        protocol: ep.protocol === 'hysteria2' ? 'hy2' : 'vless',
+        uri: toUriString(ep)
+      });
     }
   }
 
@@ -1110,20 +1071,7 @@ async function handleSubscription(c: AppContext, usernameParam?: string, tokenPa
   }
 
   const nodeIds = nodes.map(n => n.id);
-  let allInbounds: any[] = [];
-  if (nodeIds.length > 0) {
-    const placeholders = nodeIds.map(() => '?').join(',');
-    allInbounds = (await c.env.DB.prepare(`
-      SELECT ni.id, ni.node_id, ni.template_id, ni.listen_port, ni.hop_ports, ni.enabled,
-             it.name as template_name, it.protocol,
-             it.reality_dest, it.reality_server_name, it.reality_private_key, it.reality_public_key, it.reality_short_id,
-             it.hy2_up_mbps, it.hy2_down_mbps, it.hy2_masquerade
-      FROM node_inbounds ni
-      JOIN inbound_templates it ON ni.template_id = it.id
-      WHERE ni.node_id IN (${placeholders}) AND (ni.enabled IS NULL OR ni.enabled = 1)
-      ORDER BY ni.listen_port ASC, ni.id ASC
-    `).bind(...nodeIds).all<any>()).results;
-  }
+  const allInbounds = await getInboundsForSubscription(c.env.DB, nodeIds);
 
   const mappedNodes = nodes.map(n => ({
     ...n,

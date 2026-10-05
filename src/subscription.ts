@@ -1,5 +1,106 @@
 import { stringify } from 'yaml';
-import type { NodeRecord, UserRecord } from './protocol';
+import { resolveNodeEndpoints, type NodeRecord, type ResolvedEndpoint, type UserRecord } from './protocol';
+
+/**
+ * 序列化为 Clash/Mihomo/Stash 代理对象
+ */
+function toClashProxy(ep: ResolvedEndpoint) {
+  if (ep.protocol === 'vless') {
+    return {
+      name: ep.name,
+      type: 'vless',
+      server: ep.server,
+      port: ep.port,
+      uuid: ep.uuid,
+      network: 'tcp',
+      tls: true,
+      'reality-opts': {
+        'public-key': ep.realityPublicKey || '',
+        'short-id': ep.realityShortId || '0123456789abcdef'
+      },
+      servername: ep.realityServerName || 'www.amazon.com',
+      'client-fingerprint': 'chrome',
+      flow: ep.flow || 'xtls-rprx-vision'
+    };
+  }
+
+  // hysteria2
+  const base: any = {
+    name: ep.name,
+    type: 'hysteria2',
+    server: ep.server,
+    port: ep.port,
+    password: ep.password,
+    sni: ep.sni,
+    'skip-cert-verify': true,
+    up: `${ep.upMbps || 100} Mbps`,
+    down: `${ep.downMbps || 100} Mbps`
+  };
+
+  if (ep.isHop && ep.hopPorts) {
+    base.ports = ep.hopPorts;
+  }
+
+  return base;
+}
+
+/**
+ * 序列化为 Sing-box 出站对象
+ */
+function toSingBoxOutbound(ep: ResolvedEndpoint) {
+  if (ep.protocol === 'vless') {
+    return {
+      type: 'vless',
+      tag: ep.name,
+      server: ep.server,
+      server_port: ep.port,
+      uuid: ep.uuid,
+      flow: ep.flow || 'xtls-rprx-vision',
+      tls: {
+        enabled: true,
+        server_name: ep.realityServerName || 'www.amazon.com',
+        utls: { enabled: true, fingerprint: 'chrome' },
+        reality: {
+          enabled: true,
+          public_key: ep.realityPublicKey || '',
+          short_id: ep.realityShortId || '0123456789abcdef'
+        }
+      }
+    };
+  }
+
+  // hysteria2 (排除端口跳跃单列出站，保持 sing-box 纯净连接；SNI 统一取规范化 ep.sni)
+  return {
+    type: 'hysteria2',
+    tag: ep.name,
+    server: ep.server,
+    server_port: ep.port,
+    password: ep.password,
+    tls: {
+      enabled: true,
+      server_name: ep.sni || ep.server,
+      insecure: true
+    }
+  };
+}
+
+/**
+ * 序列化为标准协议 URI 字符串
+ */
+export function toUriString(ep: ResolvedEndpoint): string {
+  const remark = encodeURIComponent(ep.name);
+
+  if (ep.protocol === 'vless') {
+    return `vless://${ep.uuid}@${ep.server}:${ep.port}?encryption=none&flow=xtls-rprx-vision&security=reality&sni=${encodeURIComponent(ep.realityServerName || 'www.amazon.com')}&fp=chrome&pbk=${encodeURIComponent(ep.realityPublicKey || '')}&sid=${encodeURIComponent(ep.realityShortId || '0123456789abcdef')}&type=tcp&headerType=none#${remark}`;
+  }
+
+  // hysteria2
+  if (ep.isHop && ep.hopPorts) {
+    return `hysteria2://${encodeURIComponent(ep.password || '')}@${ep.server}:${ep.hopPorts}?alpn=h3&insecure=1&allowInsecure=1&mport=${encodeURIComponent(ep.hopPorts)}&sni=${encodeURIComponent(ep.sni || ep.server)}&upmbps=${ep.upMbps || 100}&downmbps=${ep.downMbps || 100}#${remark}`;
+  }
+
+  return `hysteria2://${encodeURIComponent(ep.password || '')}@${ep.server}:${ep.port}?alpn=h3&insecure=1&allowInsecure=1&sni=${encodeURIComponent(ep.sni || ep.server)}&upmbps=${ep.upMbps || 100}&downmbps=${ep.downMbps || 100}#${remark}`;
+}
 
 export function buildSubscription(
   user: UserRecord & { used_up_bytes: number; used_down_bytes: number; traffic_limit_bytes: number; expire_at?: string | null },
@@ -8,92 +109,31 @@ export function buildSubscription(
 ): { contentType: string; body: string; headers: Record<string, string> } {
   const ua = (userAgent || '').toLowerCase();
 
-  const activeNodes = nodes.filter(n => n.status === 'online' && n.server_ip);
+  // 严格过滤仅包含在线或非禁用且具有 IP 的节点
+  const activeNodes = nodes.filter(n => n.status !== 'disabled' && n.server_ip);
 
-  // Headers for client traffic display
+  // 响应头流量及限额提示
   const subHeaders: Record<string, string> = {
     'Profile-Update-Interval': '12',
     'Subscription-Userinfo': `upload=${user.used_up_bytes || 0}; download=${user.used_down_bytes || 0}; total=${user.traffic_limit_bytes || 0}; expire=${user.expire_at ? Math.floor(new Date(user.expire_at).getTime() / 1000) : 0}`
   };
 
+  // 集中解析所有节点的标准端点集合
+  const allEndpoints: ResolvedEndpoint[] = [];
+  for (const node of activeNodes) {
+    const tenantSuffix = node.owner_username ? ` [${node.owner_username}]` : '';
+    const creds = {
+      uuid: node.owner_uuid || user.uuid,
+      proxyPassword: node.owner_proxy_password || user.proxy_password || user.password || ''
+    };
+    const eps = resolveNodeEndpoints(node, node.inbounds || [], creds, tenantSuffix);
+    allEndpoints.push(...eps);
+  }
+
   // 1. Mihomo / Clash format
   if (ua.includes('clash') || ua.includes('mihomo') || ua.includes('stash')) {
-    const proxies: any[] = [];
-    const proxyNames: string[] = [];
-
-    for (const node of activeNodes) {
-      const ips = node.server_ip.split(',').map(s => s.trim()).filter(Boolean);
-      const targetIP = ips[0] || '127.0.0.1';
-      const suffix = node.owner_username ? ` [${node.owner_username}]` : '';
-      const nodeUuid = node.owner_uuid || user.uuid;
-      const nodePassword = node.owner_proxy_password || user.proxy_password || user.password || '';
-
-      const slots = (node.inbounds || []).filter(s => s.enabled === undefined || s.enabled === 1);
-
-      for (const slot of slots) {
-        const portSuffix = slot.listen_port === 2096 ? '' : `:${slot.listen_port}`;
-        if (slot.protocol === 'vless') {
-          const name = `${node.name}-VLESS-${targetIP}${portSuffix}${suffix}`;
-          proxies.push({
-            name,
-            type: 'vless',
-            server: targetIP,
-            port: slot.listen_port,
-            uuid: nodeUuid,
-            network: 'tcp',
-            tls: true,
-            'reality-opts': {
-              'public-key': slot.reality_public_key || '',
-              'short-id': slot.reality_short_id || '0123456789abcdef'
-            },
-            servername: slot.reality_server_name || 'www.amazon.com',
-            'client-fingerprint': 'chrome',
-            flow: 'xtls-rprx-vision'
-          });
-          proxyNames.push(name);
-        } else if (slot.protocol === 'hysteria2') {
-          let hy2Sni = slot.reality_server_name || targetIP;
-          if (slot.hy2_masquerade) {
-            try {
-              const u = new URL(slot.hy2_masquerade.startsWith('http') ? slot.hy2_masquerade : `https://${slot.hy2_masquerade}`);
-              if (u.hostname) hy2Sni = u.hostname;
-            } catch {}
-          }
-          const name = `${node.name}-Hy2-${targetIP}${portSuffix}${suffix}`;
-          proxies.push({
-            name,
-            type: 'hysteria2',
-            server: targetIP,
-            port: slot.listen_port,
-            password: nodePassword,
-            sni: hy2Sni,
-            'skip-cert-verify': true,
-            up: `${slot.hy2_up_mbps || 100} Mbps`,
-            down: `${slot.hy2_down_mbps || 100} Mbps`
-          });
-          proxyNames.push(name);
-
-          // Port Hopping in Clash
-          if (slot.hop_ports && slot.hop_ports.trim()) {
-            const hopName = `${node.name}-Hy2-Hop-${targetIP}${suffix}`;
-            proxies.push({
-              name: hopName,
-              type: 'hysteria2',
-              server: targetIP,
-              port: slot.listen_port,
-              ports: slot.hop_ports.trim(),
-              password: nodePassword,
-              sni: hy2Sni,
-              'skip-cert-verify': true,
-              up: `${slot.hy2_up_mbps || 100} Mbps`,
-              down: `${slot.hy2_down_mbps || 100} Mbps`
-            });
-            proxyNames.push(hopName);
-          }
-        }
-      }
-    }
-
+    const proxies = allEndpoints.map(toClashProxy);
+    const proxyNames = proxies.map(p => p.name);
     const fallbackList = proxyNames.length > 0 ? proxyNames : ['DIRECT'];
 
     const clashConfig = {
@@ -134,59 +174,10 @@ export function buildSubscription(
 
   // 2. Sing-box JSON format
   if (ua.includes('sing-box') || ua.includes('sfi') || ua.includes('sfa') || ua.includes('sfm')) {
-    const outbounds: any[] = [];
-    const outboundTags: string[] = [];
-
-    for (const node of activeNodes) {
-      const ips = node.server_ip.split(',').map(s => s.trim()).filter(Boolean);
-      const targetIP = ips[0] || '127.0.0.1';
-      const suffix = node.owner_username ? ` [${node.owner_username}]` : '';
-      const nodeUuid = node.owner_uuid || user.uuid;
-      const nodePassword = node.owner_proxy_password || user.proxy_password || user.password || '';
-
-      const slots = (node.inbounds || []).filter(s => s.enabled === undefined || s.enabled === 1);
-
-      for (const slot of slots) {
-        const portSuffix = slot.listen_port === 2096 ? '' : `:${slot.listen_port}`;
-        if (slot.protocol === 'vless') {
-          const tag = `${node.name}-VLESS-${targetIP}${portSuffix}${suffix}`;
-          outbounds.push({
-            type: 'vless',
-            tag,
-            server: targetIP,
-            server_port: slot.listen_port,
-            uuid: nodeUuid,
-            flow: 'xtls-rprx-vision',
-            tls: {
-              enabled: true,
-              server_name: slot.reality_server_name || 'www.amazon.com',
-              utls: { enabled: true, fingerprint: 'chrome' },
-              reality: {
-                enabled: true,
-                public_key: slot.reality_public_key || '',
-                short_id: slot.reality_short_id || '0123456789abcdef'
-              }
-            }
-          });
-          outboundTags.push(tag);
-        } else if (slot.protocol === 'hysteria2') {
-          const tag = `${node.name}-Hy2-${targetIP}${portSuffix}${suffix}`;
-          outbounds.push({
-            type: 'hysteria2',
-            tag,
-            server: targetIP,
-            server_port: slot.listen_port,
-            password: nodePassword,
-            tls: {
-              enabled: true,
-              server_name: slot.reality_server_name || targetIP,
-              insecure: true
-            }
-          });
-          outboundTags.push(tag);
-        }
-      }
-    }
+    // 排除 hop 端口避免 sing-box 客户端解析异常，保持稳定主连接
+    const singboxEndpoints = allEndpoints.filter(ep => !ep.isHop);
+    const outbounds = singboxEndpoints.map(toSingBoxOutbound);
+    const outboundTags = outbounds.map(o => o.tag);
 
     const sbConfig = {
       outbounds: [
@@ -215,56 +206,11 @@ export function buildSubscription(
   }
 
   // 3. Default: Universal Base64 URI list
-  const uris: string[] = [];
-  for (const node of activeNodes) {
-    const ips = node.server_ip.split(',').map(s => s.trim()).filter(Boolean);
-    const targetIP = ips[0] || '127.0.0.1';
-    const suffix = node.owner_username ? ` [${node.owner_username}]` : '';
-    const nodeUuid = node.owner_uuid || user.uuid;
-    const nodePassword = node.owner_proxy_password || user.proxy_password || user.password || '';
-
-    const slots = (node.inbounds || []).filter(s => s.enabled === undefined || s.enabled === 1);
-
-    for (const slot of slots) {
-      const portSuffix = slot.listen_port === 2096 ? '' : `:${slot.listen_port}`;
-      if (slot.protocol === 'vless') {
-        const vlessName = `${node.name}-VLESS-${targetIP}${portSuffix}${suffix}`;
-        const remark = encodeURIComponent(vlessName);
-        const vlessURI = `vless://${nodeUuid}@${targetIP}:${slot.listen_port}?encryption=none&flow=xtls-rprx-vision&security=reality&sni=${encodeURIComponent(slot.reality_server_name || 'www.amazon.com')}&fp=chrome&pbk=${encodeURIComponent(slot.reality_public_key || '')}&sid=${encodeURIComponent(slot.reality_short_id || '0123456789abcdef')}&type=tcp&headerType=none#${remark}`;
-        uris.push(vlessURI);
-      } else if (slot.protocol === 'hysteria2') {
-        const hy2Name = `${node.name}-Hy2-${targetIP}${portSuffix}${suffix}`;
-        const remark = encodeURIComponent(hy2Name);
-        let hy2Sni = slot.reality_server_name || targetIP;
-        if (slot.hy2_masquerade) {
-          try {
-            const u = new URL(slot.hy2_masquerade.startsWith('http') ? slot.hy2_masquerade : `https://${slot.hy2_masquerade}`);
-            if (u.hostname) hy2Sni = u.hostname;
-          } catch {}
-        }
-        const upMbps = slot.hy2_up_mbps || 100;
-        const downMbps = slot.hy2_down_mbps || 100;
-        const hy2URI = `hysteria2://${encodeURIComponent(nodePassword)}@${targetIP}:${slot.listen_port}?alpn=h3&insecure=1&allowInsecure=1&sni=${encodeURIComponent(hy2Sni)}&upmbps=${upMbps}&downmbps=${downMbps}#${remark}`;
-        uris.push(hy2URI);
-
-        // Hysteria 2 Port Hopping URI
-        if (slot.hop_ports && slot.hop_ports.trim()) {
-          const hopName = `${node.name}-Hy2-Hop-${targetIP}${suffix}`;
-          const hopRemark = encodeURIComponent(hopName);
-          const hopPortRange = slot.hop_ports.trim();
-          const hopURI = `hysteria2://${encodeURIComponent(nodePassword)}@${targetIP}:${hopPortRange}?alpn=h3&insecure=1&allowInsecure=1&mport=${encodeURIComponent(hopPortRange)}&sni=${encodeURIComponent(hy2Sni)}&upmbps=${upMbps}&downmbps=${downMbps}#${hopRemark}`;
-          uris.push(hopURI);
-        }
-      }
-    }
-  }
-
-  const plainList = uris.join('\n');
-  const base64Body = btoa(unescape(encodeURIComponent(plainList)));
+  const uris = allEndpoints.map(toUriString);
 
   return {
     contentType: 'text/plain; charset=utf-8',
-    body: base64Body,
+    body: btoa(uris.join('\n')),
     headers: subHeaders
   };
 }
