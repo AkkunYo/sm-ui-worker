@@ -117,7 +117,7 @@ const adminOnly = async (c: AppContext, next: any) => {
 
 app.get('/api/v1/system/setup/status', async (c) => {
   const initialized = await isSetupCompleted(c.env.DB);
-  return c.json({ is_initialized: initialized, version: '1.1.0' });
+  return c.json({ is_initialized: initialized, version: '1.15.2' });
 });
 
 app.post('/api/v1/system/setup', async (c) => {
