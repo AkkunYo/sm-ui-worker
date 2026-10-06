@@ -88,7 +88,7 @@
 
         <div v-if="!isCollapsed" class="px-2 flex items-center justify-between text-[11px] text-slate-500 font-mono">
           <span>Version</span>
-          <span>{{ appVersion ? `v${appVersion}` : 'v1.1.0' }}</span>
+          <span>{{ appVersion ? `v${appVersion}` : 'v1.15.2' }}</span>
         </div>
 
         <!-- Logout Button -->
