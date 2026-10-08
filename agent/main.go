@@ -77,11 +77,13 @@ var (
 	GitCommit = "none"
 	BuildTime = "unknown"
 
-	procMu      sync.Mutex
-	singBoxCmd  *exec.Cmd
-	cpuMu       sync.Mutex
-	lastTotalCP uint64
-	lastIdleCP  uint64
+	procMu           sync.Mutex
+	singBoxCmd       *exec.Cmd
+	cpuMu            sync.Mutex
+	lastTotalCP      uint64
+	lastIdleCP       uint64
+	pendingTrafficMu sync.Mutex
+	pendingTraffic   = make(map[string]*TrafficDelta)
 )
 
 func main() {
@@ -188,11 +190,32 @@ func syncWithMaster(cfg Config, currentVer int) int {
 	mem := readMemPercent()
 	uptime := readSystemUptime()
 	rtt := measureRTT(cfg.MasterURL)
-	trafficDeltas := queryTrafficDeltas()
 
-	if len(trafficDeltas) > 0 {
-		log.Printf("[Traffic] Captured deltas for %d users from sing-box", len(trafficDeltas))
+	// Fetch fresh deltas and accumulate into pendingTraffic buffer
+	freshDeltas := queryTrafficDeltas()
+	if len(freshDeltas) > 0 {
+		log.Printf("[Traffic] Captured deltas for %d users from sing-box", len(freshDeltas))
 	}
+
+	pendingTrafficMu.Lock()
+	for _, d := range freshDeltas {
+		acc, exists := pendingTraffic[d.Username]
+		if !exists {
+			acc = &TrafficDelta{Username: d.Username}
+			pendingTraffic[d.Username] = acc
+		}
+		acc.Uplink += d.Uplink
+		acc.Downlink += d.Downlink
+	}
+
+	// Snapshot all buffered deltas to report in this heartbeat
+	trafficDeltas := make([]TrafficDelta, 0, len(pendingTraffic))
+	for _, d := range pendingTraffic {
+		if d.Uplink > 0 || d.Downlink > 0 {
+			trafficDeltas = append(trafficDeltas, *d)
+		}
+	}
+	pendingTrafficMu.Unlock()
 
 	currentHashBytes, _ := os.ReadFile(filepath.Join(cfg.BaseDir, "configs", "current.hash"))
 	currentHash := strings.TrimSpace(string(currentHashBytes))
@@ -237,6 +260,19 @@ func syncWithMaster(cfg Config, currentVer int) int {
 		log.Printf("[Heartbeat] Master responded with status %d: %s", resp.StatusCode, string(body))
 		return currentVer
 	}
+
+	// Master confirmed receipt (HTTP 200): deduct the successfully reported deltas from buffer
+	pendingTrafficMu.Lock()
+	for _, reported := range trafficDeltas {
+		if acc, ok := pendingTraffic[reported.Username]; ok {
+			acc.Uplink -= reported.Uplink
+			acc.Downlink -= reported.Downlink
+			if acc.Uplink <= 0 && acc.Downlink <= 0 {
+				delete(pendingTraffic, reported.Username)
+			}
+		}
+	}
+	pendingTrafficMu.Unlock()
 
 	var syncResp SyncResponse
 	if err := json.NewDecoder(resp.Body).Decode(&syncResp); err != nil {

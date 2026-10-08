@@ -1,6 +1,6 @@
 {
   "name": "sm-ui-worker",
-  "version": "1.15.2",
+  "version": "1.15.3",
   "description": "Serverless SingBox Matrix UI control plane running on Cloudflare Workers & D1",
   "main": "src/index.ts",
   "type": "module",
