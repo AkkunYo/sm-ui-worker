@@ -28,10 +28,12 @@ export async function getInboundsForServer(
  */
 export async function getInboundsForSubscription(
   db: D1Database,
-  nodeIds: number[]
+  nodeIds: number[],
+  includeDisabled = false
 ): Promise<NodeInboundSlot[]> {
   if (nodeIds.length === 0) return [];
   const placeholders = nodeIds.map(() => '?').join(',');
+  const enabledClause = includeDisabled ? '' : ' AND (ni.enabled IS NULL OR ni.enabled = 1)';
 
   const result = await db.prepare(`
     SELECT ni.id, ni.node_id, ni.template_id, ni.listen_port, ni.hop_ports, ni.enabled,
@@ -40,7 +42,7 @@ export async function getInboundsForSubscription(
            it.hy2_up_mbps, it.hy2_down_mbps, it.hy2_masquerade
     FROM node_inbounds ni
     JOIN inbound_templates it ON ni.template_id = it.id
-    WHERE ni.node_id IN (${placeholders}) AND (ni.enabled IS NULL OR ni.enabled = 1)
+    WHERE ni.node_id IN (${placeholders})${enabledClause}
     ORDER BY ni.listen_port ASC, ni.id ASC
   `).bind(...nodeIds).all<NodeInboundSlot>();
 

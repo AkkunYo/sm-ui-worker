@@ -79,6 +79,9 @@ CREATE TABLE IF NOT EXISTS node_inbounds (
   UNIQUE(node_id, template_id, listen_port)
 );
 
+CREATE INDEX IF NOT EXISTS idx_node_inbounds_template_id ON node_inbounds(template_id);
+CREATE INDEX IF NOT EXISTS idx_inbound_templates_owner_id ON inbound_templates(owner_id);
+
 CREATE TABLE IF NOT EXISTS login_attempts (
   key TEXT PRIMARY KEY,
   fail_count INTEGER NOT NULL DEFAULT 0,
