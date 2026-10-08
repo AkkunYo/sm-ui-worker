@@ -295,8 +295,9 @@ app.post('/api/v1/node/sync', async (c) => {
   // Process traffic reporting deltas: enforce non-negative integers and strict tenant scope
   let nodeDeltaUp = 0;
   let nodeDeltaDown = 0;
-  if (Array.isArray(body.traffic_deltas)) {
-    const nodeOwner = await c.env.DB.prepare('SELECT id, username FROM users WHERE id = ?').bind(node.owner_id).first<{ id: number; username: string }>();
+  let nodeOwner: { id: number; username: string } | null = null;
+  if (Array.isArray(body.traffic_deltas) && body.traffic_deltas.length > 0) {
+    nodeOwner = await c.env.DB.prepare('SELECT id, username FROM users WHERE id = ?').bind(node.owner_id).first<{ id: number; username: string }>();
     const MAX_DELTA_BYTES = 500 * 1024 * 1024 * 1024; // 500 GB ceiling per 30s heartbeat
 
     for (const d of body.traffic_deltas) {
@@ -319,26 +320,32 @@ app.post('/api/v1/node/sync', async (c) => {
 
       nodeDeltaUp += up;
       nodeDeltaDown += down;
+    }
+  }
 
-      if (nodeOwner) {
-        await c.env.DB.prepare(`
+  // Atomically update tenant traffic and node physical traffic in a single batch transaction
+  if (nodeDeltaUp > 0 || nodeDeltaDown > 0) {
+    const stmts: D1PreparedStatement[] = [
+      c.env.DB.prepare(`
+        UPDATE nodes SET
+          used_up_bytes = used_up_bytes + ?,
+          used_down_bytes = used_down_bytes + ?
+        WHERE id = ?
+      `).bind(nodeDeltaUp, nodeDeltaDown, node.id)
+    ];
+
+    if (nodeOwner) {
+      stmts.push(
+        c.env.DB.prepare(`
           UPDATE users SET
             used_up_bytes = used_up_bytes + ?,
             used_down_bytes = used_down_bytes + ?
           WHERE id = ?
-        `).bind(up, down, nodeOwner.id).run();
-      }
+        `).bind(nodeDeltaUp, nodeDeltaDown, nodeOwner.id)
+      );
     }
-  }
 
-  // Atomically update node's own physical traffic
-  if (nodeDeltaUp > 0 || nodeDeltaDown > 0) {
-    await c.env.DB.prepare(`
-      UPDATE nodes SET
-        used_up_bytes = used_up_bytes + ?,
-        used_down_bytes = used_down_bytes + ?
-      WHERE id = ?
-    `).bind(nodeDeltaUp, nodeDeltaDown, node.id).run();
+    await c.env.DB.batch(stmts);
   }
 
   // Check if config needs reload via dual-track: hash-based when client reports config_hash, otherwise version-based
@@ -421,20 +428,7 @@ app.get('/api/v1/nodes', authMiddleware, async (c) => {
   }
 
   const nodeIds = nodes.map(n => n.id);
-  let allInbounds: any[] = [];
-  if (nodeIds.length > 0) {
-    const placeholders = nodeIds.map(() => '?').join(',');
-    allInbounds = (await c.env.DB.prepare(`
-      SELECT ni.id, ni.node_id, ni.template_id, ni.listen_port, ni.hop_ports, ni.enabled,
-             it.name as template_name, it.protocol,
-             it.reality_dest, it.reality_server_name, it.reality_private_key, it.reality_public_key, it.reality_short_id,
-             it.hy2_up_mbps, it.hy2_down_mbps, it.hy2_masquerade
-      FROM node_inbounds ni
-      JOIN inbound_templates it ON ni.template_id = it.id
-      WHERE ni.node_id IN (${placeholders})
-      ORDER BY ni.listen_port ASC, ni.id ASC
-    `).bind(...nodeIds).all<any>()).results;
-  }
+  const allInbounds = await getInboundsForSubscription(c.env.DB, nodeIds, true);
 
   const evaluated = nodes.map(n => {
     let currentStatus = n.status;
@@ -726,6 +720,14 @@ app.get('/api/v1/templates', authMiddleware, async (c) => {
       WHERE t.owner_id IS NULL OR t.owner_id = ?
       ORDER BY t.owner_id ASC, t.protocol ASC, t.id ASC
     `).bind(currentUser.userId).all<any>()).results;
+
+    // Strip private keys for system templates or templates not owned by this tenant
+    templates = templates.map(t => {
+      if (t.owner_id === null || t.owner_id !== currentUser.userId) {
+        return { ...t, reality_private_key: '' };
+      }
+      return t;
+    });
   }
   return c.json(templates);
 });
