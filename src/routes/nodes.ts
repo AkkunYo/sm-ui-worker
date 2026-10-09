@@ -92,19 +92,25 @@ nodesRoute.post('/api/v1/nodes', authMiddleware, async (c) => {
 
   // Insert slots into node_inbounds if provided
   if (nodeId && Array.isArray(body.inbounds) && body.inbounds.length > 0) {
+    const stmts: D1PreparedStatement[] = [];
     for (const slot of body.inbounds) {
       if (slot.template_id) {
-        await c.env.DB.prepare(`
-          INSERT INTO node_inbounds (node_id, template_id, listen_port, hop_ports, enabled)
-          VALUES (?, ?, ?, ?, ?)
-        `).bind(
-          nodeId,
-          parseInt(slot.template_id, 10),
-          parseInt(slot.listen_port, 10) || 2096,
-          (slot.hop_ports || '').trim(),
-          slot.enabled !== undefined ? (slot.enabled ? 1 : 0) : 1
-        ).run();
+        stmts.push(
+          c.env.DB.prepare(`
+            INSERT INTO node_inbounds (node_id, template_id, listen_port, hop_ports, enabled)
+            VALUES (?, ?, ?, ?, ?)
+          `).bind(
+            nodeId,
+            parseInt(slot.template_id, 10),
+            parseInt(slot.listen_port, 10) || 2096,
+            (slot.hop_ports || '').trim(),
+            slot.enabled !== undefined ? (slot.enabled ? 1 : 0) : 1
+          )
+        );
       }
+    }
+    if (stmts.length > 0) {
+      await c.env.DB.batch(stmts);
     }
   } else if (nodeId) {
     // Auto-bind default public templates for quick zero-conf start
@@ -112,8 +118,8 @@ nodesRoute.post('/api/v1/nodes', authMiddleware, async (c) => {
       SELECT id, protocol FROM inbound_templates WHERE owner_id IS NULL AND is_default = 1
     `).all<{ id: number; protocol: string }>()).results;
 
-    for (const tmpl of defaults) {
-      await c.env.DB.prepare(`
+    const stmts = defaults.map(tmpl =>
+      c.env.DB.prepare(`
         INSERT INTO node_inbounds (node_id, template_id, listen_port, hop_ports, enabled)
         VALUES (?, ?, ?, ?, 1)
       `).bind(
@@ -121,7 +127,10 @@ nodesRoute.post('/api/v1/nodes', authMiddleware, async (c) => {
         tmpl.id,
         tmpl.protocol === 'vless' ? proxyPort : 2096,
         tmpl.protocol === 'hysteria2' ? hopPorts : ''
-      ).run();
+      )
+    );
+    if (stmts.length > 0) {
+      await c.env.DB.batch(stmts);
     }
   }
 
@@ -165,23 +174,28 @@ nodesRoute.put('/api/v1/nodes/:id', authMiddleware, async (c) => {
     UPDATE nodes SET owner_id = ?, name = ?, server_ip = ?, proxy_port = ?, hop_ports = ?, protocol = ?, status = ? WHERE id = ?
   `).bind(ownerId, name, serverIp, proxyPort, hopPorts, protocol, status, id).run();
 
-  // If inbounds slots provided, update them
+  // If inbounds slots provided, update them atomically in a batch transaction
   if (Array.isArray(body.inbounds)) {
-    await c.env.DB.prepare('DELETE FROM node_inbounds WHERE node_id = ?').bind(id).run();
+    const stmts: D1PreparedStatement[] = [
+      c.env.DB.prepare('DELETE FROM node_inbounds WHERE node_id = ?').bind(id)
+    ];
     for (const slot of body.inbounds) {
       if (slot.template_id) {
-        await c.env.DB.prepare(`
-          INSERT INTO node_inbounds (node_id, template_id, listen_port, hop_ports, enabled)
-          VALUES (?, ?, ?, ?, ?)
-        `).bind(
-          id,
-          parseInt(slot.template_id, 10),
-          parseInt(slot.listen_port, 10) || proxyPort,
-          (slot.hop_ports || '').trim(),
-          slot.enabled !== undefined ? (slot.enabled ? 1 : 0) : 1
-        ).run();
+        stmts.push(
+          c.env.DB.prepare(`
+            INSERT INTO node_inbounds (node_id, template_id, listen_port, hop_ports, enabled)
+            VALUES (?, ?, ?, ?, ?)
+          `).bind(
+            id,
+            parseInt(slot.template_id, 10),
+            parseInt(slot.listen_port, 10) || proxyPort,
+            (slot.hop_ports || '').trim(),
+            slot.enabled !== undefined ? (slot.enabled ? 1 : 0) : 1
+          )
+        );
       }
     }
+    await c.env.DB.batch(stmts);
   }
 
   await bumpConfigVersion(c.env.DB);
