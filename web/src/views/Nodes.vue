@@ -846,24 +846,12 @@ async function toggleNodePower(node) {
   togglingId.value = node.id
   const nextStatus = node.status === 'disabled' ? 'online' : 'disabled'
   try {
-    if (node.is_local) {
-      await request('/api/v1/system/master', {
-        method: 'POST',
-        body: JSON.stringify({
-          name: node.name,
-          server_ip: node.server_ip,
-          proxy_port: node.proxy_port,
-          enable_local_node: nextStatus === 'online'
-        })
+    await request(`/api/v1/nodes/${node.id}`, {
+      method: 'PUT',
+      body: JSON.stringify({
+        status: nextStatus
       })
-    } else {
-      await request(`/api/v1/nodes/${node.id}`, {
-        method: 'PUT',
-        body: JSON.stringify({
-          status: nextStatus
-        })
-      })
-    }
+    })
     await loadNodes()
   } catch (err) {
     alert(err.message || '更新主机状态失败')

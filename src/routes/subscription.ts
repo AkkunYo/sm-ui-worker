@@ -22,6 +22,22 @@ const toPublicProfile = (u: any) => ({
   expire_at: u.expire_at
 });
 
+// Helper to query active subscription nodes with proper multi-tenant isolation
+async function getSubscriptionNodes(db: D1Database, userId: number, isAllMode: boolean): Promise<NodeRecord[]> {
+  if (isAllMode) {
+    // Admin God-mode: all non-disabled nodes across all active tenants with genuine tenant credentials
+    return (await db.prepare(`
+      SELECT n.*, u.username as owner_username, u.uuid as owner_uuid, u.proxy_password as owner_proxy_password
+      FROM nodes n
+      JOIN users u ON n.owner_id = u.id
+      WHERE n.status != 'disabled' AND u.status = 1
+      ORDER BY n.owner_id ASC, n.id ASC
+    `).all<any>()).results;
+  }
+  // Non-disabled nodes owned by this user (offline nodes stay listed; admins disable/delete to remove)
+  return (await db.prepare("SELECT * FROM nodes WHERE owner_id = ? AND status != 'disabled'").bind(userId).all<NodeRecord>()).results;
+}
+
 subscriptionRoute.get('/api/v1/subscription', authMiddleware, async (c) => {
   const currentUser = c.get('user') as JwtUser;
   const targetUserId = (currentUser.role === 'admin' && c.req.query('user_id'))
@@ -40,21 +56,7 @@ subscriptionRoute.get('/api/v1/subscription', authMiddleware, async (c) => {
   const isExpired = user.expire_at ? new Date(user.expire_at) <= new Date() : false;
   const active = user.status === 1 && !isTrafficExceeded && !isExpired;
 
-  let nodes: any[] = [];
-  if (isAllMode) {
-    // Admin God-mode: All non-disabled nodes across all tenants with genuine owner credentials
-    nodes = (await c.env.DB.prepare(`
-      SELECT n.*, u.username as owner_username, u.uuid as owner_uuid, u.proxy_password as owner_proxy_password
-      FROM nodes n
-      JOIN users u ON n.owner_id = u.id
-      WHERE n.status != 'disabled'
-      ORDER BY n.owner_id ASC, n.id ASC
-    `).all<any>()).results;
-  } else {
-    // Nodes belonging ONLY to this user!
-    nodes = (await c.env.DB.prepare("SELECT * FROM nodes WHERE owner_id = ? AND status != 'disabled'").bind(user.id).all<any>()).results;
-  }
-
+  const nodes = await getSubscriptionNodes(c.env.DB, user.id, isAllMode);
   const nodeIds = nodes.map(n => n.id);
   const allInbounds = await getInboundsForSubscription(c.env.DB, nodeIds);
 
@@ -178,21 +180,7 @@ async function handleSubscription(c: AppContext, usernameParam?: string, tokenPa
 
   const isAllMode = user.role === 'admin' && c.req.query('all') === 'true';
 
-  let nodes: any[] = [];
-  if (isAllMode) {
-    // Admin God-mode: all non-disabled nodes across all tenants with genuine tenant credentials
-    nodes = (await c.env.DB.prepare(`
-      SELECT n.*, u.username as owner_username, u.uuid as owner_uuid, u.proxy_password as owner_proxy_password
-      FROM nodes n
-      JOIN users u ON n.owner_id = u.id
-      WHERE n.status != 'disabled'
-      ORDER BY n.owner_id ASC, n.id ASC
-    `).all<any>()).results;
-  } else {
-    // Non-disabled nodes owned by this user (offline nodes stay listed; admins disable/delete to remove)
-    nodes = (await c.env.DB.prepare("SELECT * FROM nodes WHERE owner_id = ? AND status != 'disabled'").bind(user.id).all<NodeRecord>()).results;
-  }
-
+  const nodes = await getSubscriptionNodes(c.env.DB, user.id, isAllMode);
   const nodeIds = nodes.map(n => n.id);
   const allInbounds = await getInboundsForSubscription(c.env.DB, nodeIds);
 
