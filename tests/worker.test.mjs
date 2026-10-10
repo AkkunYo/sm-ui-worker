@@ -93,6 +93,26 @@ test('explicit format wins over User Agent and subscription credentials stay unc
   const outbound=config.outbounds.find(o=>o.type==='vless');
   assert.equal(outbound.server,'192.0.2.1'); assert.equal(outbound.uuid,'uuid-2');
 });
+test('sing-box subscription preserves hysteria2 port hopping',async()=>{
+  await sql("INSERT INTO node_inbounds(node_id,template_id,listen_port,hop_ports,enabled) VALUES(1,2,2096,'22200-22300',1)");
+  const res=await mf.dispatchFetch('https://test.local/sub/alice/sub-2?format=singbox');
+  assert.equal(res.status,200);
+  const config=await res.json();
+  const outbound=config.outbounds.find(o=>o.type==='hysteria2' && o.server_ports);
+  assert.deepEqual(outbound.server_ports,['22200:22300']);
+  assert.equal('server_port' in outbound,false);
+});
+test('base64 subscription emits NekoBox-compatible hysteria2 hopping URI',async()=>{
+  await sql("INSERT INTO node_inbounds(node_id,template_id,listen_port,hop_ports,enabled) VALUES(1,2,2096,'22200-22300',1)");
+  const res=await mf.dispatchFetch('https://test.local/sub/alice/sub-2?format=base64');
+  assert.equal(res.status,200);
+  const uris=Buffer.from(await res.text(),'base64').toString('utf8').split('\n');
+  const hopUri=uris.find(uri=>uri.includes('Hy2-Hop-'));
+  assert.ok(hopUri);
+  assert.match(hopUri,/^hysteria2:\/\/[^@]+@192\.0\.2\.1:2096\?/);
+  assert.match(hopUri,/(?:\?|&)mport=22200-22300(?:&|$)/);
+  assert.doesNotMatch(hopUri,/@192\.0\.2\.1:22200-22300(?:\?|$)/);
+});
 test('admin preview edits selected tenant, tenants cannot raise own quotas',async()=>{
   const denied=await request('/api/v1/subscription',{traffic_limit_bytes:999},2,'PUT');
   assert.equal(denied.status,403);
