@@ -69,12 +69,13 @@ function toSingBoxOutbound(ep: ResolvedEndpoint) {
     };
   }
 
-  // hysteria2 (排除端口跳跃单列出站，保持 sing-box 纯净连接；SNI 统一取规范化 ep.sni)
-  return {
+  // sing-box 1.11+ supports Hysteria2 port hopping through server_ports.
+  // Keep the regular endpoint on server_port and map the subscription's
+  // `start-end` notation to sing-box's `start:end` range syntax.
+  const outbound: Record<string, unknown> = {
     type: 'hysteria2',
     tag: ep.name,
     server: ep.server,
-    server_port: ep.port,
     password: ep.password,
     tls: {
       enabled: true,
@@ -82,6 +83,12 @@ function toSingBoxOutbound(ep: ResolvedEndpoint) {
       insecure: true
     }
   };
+  if (ep.isHop && ep.hopPorts) {
+    outbound.server_ports = [ep.hopPorts.trim().replace(/^(\d+)\s*-\s*(\d+)$/, '$1:$2')];
+  } else {
+    outbound.server_port = ep.port;
+  }
+  return outbound;
 }
 
 /**
@@ -96,7 +103,10 @@ export function toUriString(ep: ResolvedEndpoint): string {
 
   // hysteria2
   if (ep.isHop && ep.hopPorts) {
-    return `hysteria2://${encodeURIComponent(ep.password || '')}@${ep.server}:${ep.hopPorts}?alpn=h3&insecure=1&allowInsecure=1&mport=${encodeURIComponent(ep.hopPorts)}&sni=${encodeURIComponent(ep.sni || ep.server)}&upmbps=${ep.upMbps || 100}&downmbps=${ep.downMbps || 100}#${remark}`;
+    // NekoBox parses the authority as a single port and reads the hopping
+    // range from `mport`; placing the range in `host:port` makes the URI
+    // invalid to its URL parser and the node is silently dropped.
+    return `hysteria2://${encodeURIComponent(ep.password || '')}@${ep.server}:${ep.port}?alpn=h3&insecure=1&allowInsecure=1&mport=${encodeURIComponent(ep.hopPorts)}&sni=${encodeURIComponent(ep.sni || ep.server)}&upmbps=${ep.upMbps || 100}&downmbps=${ep.downMbps || 100}#${remark}`;
   }
 
   return `hysteria2://${encodeURIComponent(ep.password || '')}@${ep.server}:${ep.port}?alpn=h3&insecure=1&allowInsecure=1&sni=${encodeURIComponent(ep.sni || ep.server)}&upmbps=${ep.upMbps || 100}&downmbps=${ep.downMbps || 100}#${remark}`;
@@ -161,9 +171,7 @@ export function buildSubscription(
 
   // 2. Sing-box JSON format
   if (format === 'singbox' || (!format && (ua.includes('sing-box') || ua.includes('sfi') || ua.includes('sfa') || ua.includes('sfm')))) {
-    // 排除 hop 端口避免 sing-box 客户端解析异常，保持稳定主连接
-    const singboxEndpoints = allEndpoints.filter(ep => !ep.isHop);
-    const outbounds = singboxEndpoints.map(toSingBoxOutbound);
+    const outbounds = allEndpoints.map(toSingBoxOutbound);
     const outboundTags = outbounds.map(o => o.tag);
 
     const sbConfig = {
