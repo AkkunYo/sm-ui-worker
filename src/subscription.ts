@@ -105,9 +105,11 @@ export function toUriString(ep: ResolvedEndpoint): string {
 export function buildSubscription(
   user: UserRecord & { used_up_bytes: number; used_down_bytes: number; traffic_limit_bytes: number; expire_at?: string | null },
   allEndpoints: ResolvedEndpoint[],
-  userAgent: string
+  userAgent: string,
+  requestedFormat = ''
 ): { contentType: string; body: string; headers: Record<string, string> } {
   const ua = (userAgent || '').toLowerCase();
+  const format = requestedFormat.toLowerCase().trim();
 
   // 响应头流量及限额提示
   const subHeaders: Record<string, string> = {
@@ -116,7 +118,7 @@ export function buildSubscription(
   };
 
   // 1. Mihomo / Clash format
-  if (ua.includes('clash') || ua.includes('mihomo') || ua.includes('stash')) {
+  if (format === 'clash' || (!format && (ua.includes('clash') || ua.includes('mihomo') || ua.includes('stash')))) {
     const proxies = allEndpoints.map(toClashProxy);
     const proxyNames = proxies.map(p => p.name);
     const fallbackList = proxyNames.length > 0 ? proxyNames : ['DIRECT'];
@@ -158,7 +160,7 @@ export function buildSubscription(
   }
 
   // 2. Sing-box JSON format
-  if (ua.includes('sing-box') || ua.includes('sfi') || ua.includes('sfa') || ua.includes('sfm')) {
+  if (format === 'singbox' || (!format && (ua.includes('sing-box') || ua.includes('sfi') || ua.includes('sfa') || ua.includes('sfm')))) {
     // 排除 hop 端口避免 sing-box 客户端解析异常，保持稳定主连接
     const singboxEndpoints = allEndpoints.filter(ep => !ep.isHop);
     const outbounds = singboxEndpoints.map(toSingBoxOutbound);
@@ -190,7 +192,7 @@ export function buildSubscription(
     };
   }
 
-  // 3. Default: Universal Base64 URI list
+  // 3. Explicit base64 or default universal URI list
   const uris = allEndpoints.map(toUriString);
 
   return {

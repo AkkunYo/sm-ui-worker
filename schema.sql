@@ -44,6 +44,15 @@ CREATE TABLE IF NOT EXISTS nodes (
   core_version TEXT DEFAULT 'v1.14.2',
   agent_version TEXT DEFAULT '',
   config_version INTEGER DEFAULT 1,
+  protocol_version INTEGER DEFAULT 2,
+  desired_state TEXT NOT NULL DEFAULT 'active',
+  revoked_at TEXT,
+  desired_config_version INTEGER DEFAULT 1,
+  desired_config_hash TEXT DEFAULT '',
+  applied_config_version INTEGER DEFAULT 0,
+  applied_config_hash TEXT DEFAULT '',
+  last_apply_error TEXT DEFAULT '',
+  address_locked INTEGER DEFAULT 0,
   created_at TEXT DEFAULT (datetime('now')),
   updated_at TEXT DEFAULT (datetime('now')),
   UNIQUE(owner_id, name)
@@ -81,6 +90,17 @@ CREATE TABLE IF NOT EXISTS node_inbounds (
 
 CREATE INDEX IF NOT EXISTS idx_node_inbounds_template_id ON node_inbounds(template_id);
 CREATE INDEX IF NOT EXISTS idx_inbound_templates_owner_id ON inbound_templates(owner_id);
+
+CREATE TABLE IF NOT EXISTS traffic_receipts (
+  node_id INTEGER NOT NULL REFERENCES nodes(id) ON DELETE CASCADE,
+  batch_id TEXT NOT NULL,
+  uplink_bytes INTEGER NOT NULL DEFAULT 0,
+  downlink_bytes INTEGER NOT NULL DEFAULT 0,
+  received_at TEXT NOT NULL DEFAULT (datetime('now')),
+  PRIMARY KEY (node_id, batch_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_traffic_receipts_received_at ON traffic_receipts(received_at);
 
 CREATE TABLE IF NOT EXISTS login_attempts (
   key TEXT PRIMARY KEY,

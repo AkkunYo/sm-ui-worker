@@ -156,6 +156,7 @@ async function saveAdminProfile() {
     profileForm.value.new_password = ''
     profileForm.value.confirm_password = ''
     alert('管理员信息已更新，请重新登录。')
+    request('/api/v1/auth/logout', { method: 'POST' }).catch(() => {})
     removeToken()
     router.push('/login')
   } catch (err) {

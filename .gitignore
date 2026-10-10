@@ -8,6 +8,8 @@ yarn-error.log*
 # Runtime data
 .dev.vars
 .wrangler
+.wrangler.generated.jsonc
+.deploy-backups/
 dist
 web/dist
 node_modules
@@ -23,6 +25,7 @@ agent/bin/
 .DS_Store
 .idea/
 .vscode/
+.codegraph/
 *.swp
 *.swo
 test-results

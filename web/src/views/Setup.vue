@@ -110,9 +110,9 @@ async function handleSubmit() {
       method: 'POST',
       body: JSON.stringify(form)
     })
-    if (res && res.token) {
+    if (res && res.user) {
       setSystemInitialized(true)
-      setToken(res.token)
+      setToken('cookie')
       if (res.user) setUser(res.user)
       window.location.hash = '#/'
     }

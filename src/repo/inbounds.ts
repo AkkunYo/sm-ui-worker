@@ -15,7 +15,9 @@ export async function getInboundsForServer(
            it.hy2_up_mbps, it.hy2_down_mbps, it.hy2_masquerade
     FROM node_inbounds ni
     JOIN inbound_templates it ON ni.template_id = it.id
-    WHERE ni.node_id = ? AND (ni.enabled IS NULL OR ni.enabled = 1)
+    WHERE ni.node_id = ?
+      AND (ni.enabled IS NULL OR ni.enabled = 1)
+      AND (it.owner_id IS NULL OR it.owner_id = (SELECT owner_id FROM nodes WHERE id = ni.node_id))
     ORDER BY ni.listen_port ASC, ni.id ASC
   `).bind(nodeId).all<NodeInboundSlot>();
 
@@ -43,6 +45,7 @@ export async function getInboundsForSubscription(
     FROM node_inbounds ni
     JOIN inbound_templates it ON ni.template_id = it.id
     WHERE ni.node_id IN (${placeholders})${enabledClause}
+      AND (it.owner_id IS NULL OR it.owner_id = (SELECT owner_id FROM nodes WHERE id = ni.node_id))
     ORDER BY ni.listen_port ASC, ni.id ASC
   `).bind(...nodeIds).all<NodeInboundSlot>();
 

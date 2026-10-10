@@ -12,7 +12,7 @@
    - 静态资源：Workers Static Assets 托管 Vue 3 仪表盘（SPA 路由降级）
 2. **主从通信 (方案 A: HTTP Pull Sync 轮询拉取)**：
    - 各 VPS 节点运行轻量 Go 守护进程 (`agent/sm-node`)；
-   - 默认每 10 秒向 Master 发送 `POST /api/v1/node/sync`，上报状态、延迟、CPU、内存、Uptime 以及用户流量消耗增量；
+   - 默认每 10 秒向 Master 发送 `POST /api/v2/node/sync`，上报状态、延迟、CPU、内存、Uptime 以及用户流量消耗增量；
    - Master 在响应中附带全局配置版本号 `config_version`；
    - 一旦在 Web 界面增删节点、更新用户或修改入站模板，`config_version` 自动递增；
    - Node 发现版本落后，响应携带最新 Sing-box JSON 配置，Node 写入本地并向 `sing-box` 触发 `syscall.SIGHUP` 毫秒平滑热重载。
