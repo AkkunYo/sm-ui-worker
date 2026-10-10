@@ -1,24 +1,18 @@
 import fs from 'node:fs';
 import path from 'node:path';
 
-const databaseId = process.env.D1_DATABASE_ID;
-const filePath = path.resolve(process.cwd(), 'wrangler.jsonc');
+const sourcePath = path.resolve(process.cwd(), 'wrangler.jsonc');
+const generatedPath = path.resolve(process.cwd(), '.wrangler.generated.jsonc');
 
-if (fs.existsSync(filePath)) {
-  let content = fs.readFileSync(filePath, 'utf8');
-
-  if (databaseId && databaseId.trim()) {
-    content = content.replace(
-      /"database_id":\s*"[^"]*"/,
-      `"database_id": "${databaseId.trim()}"`
-    );
-    console.log(`[prepare-deploy] Injected D1_DATABASE_ID (${databaseId.trim()}) into wrangler.jsonc`);
-  } else {
-    // If no D1_DATABASE_ID is provided, strip d1_databases from wrangler.jsonc
-    // so Wrangler automatically inherits the pre-configured Dashboard binding without ID mismatch.
-    content = content.replace(/,\s*"d1_databases":\s*\[[\s\S]*?\]/, '');
-    console.log('[prepare-deploy] No D1_DATABASE_ID specified. Stripped d1_databases block to use Cloudflare Dashboard binding.');
-  }
-
-  fs.writeFileSync(filePath, content, 'utf8');
+if (!fs.existsSync(sourcePath)) {
+  throw new Error(`Missing Wrangler source config: ${sourcePath}`);
 }
+
+let content = fs.readFileSync(sourcePath, 'utf8');
+const databaseId = (process.env.D1_DATABASE_ID || '').trim();
+if (databaseId) {
+  content = content.replace(/"database_id":\s*"[^"]*"/, `"database_id": "${databaseId}"`);
+}
+
+fs.writeFileSync(generatedPath, content, 'utf8');
+console.log(`[prepare-deploy] Generated ${path.basename(generatedPath)}; source wrangler.jsonc was not modified.`);

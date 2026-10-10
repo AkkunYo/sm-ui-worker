@@ -70,8 +70,8 @@ async function handleLogin() {
       method: 'POST',
       body: JSON.stringify(form)
     })
-    if (res && res.token) {
-      setToken(res.token)
+    if (res && res.user) {
+      setToken('cookie')
       if (res.user) setUser(res.user)
       router.push('/')
     }

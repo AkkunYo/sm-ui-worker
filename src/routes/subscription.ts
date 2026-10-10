@@ -30,12 +30,12 @@ async function getSubscriptionNodes(db: D1Database, userId: number, isAllMode: b
       SELECT n.*, u.username as owner_username, u.uuid as owner_uuid, u.proxy_password as owner_proxy_password
       FROM nodes n
       JOIN users u ON n.owner_id = u.id
-      WHERE n.status != 'disabled' AND u.status = 1
+      WHERE n.status != 'disabled' AND COALESCE(n.desired_state, 'active') = 'active' AND u.status = 1
       ORDER BY n.owner_id ASC, n.id ASC
     `).all<any>()).results;
   }
   // Non-disabled nodes owned by this user (offline nodes stay listed; admins disable/delete to remove)
-  return (await db.prepare("SELECT * FROM nodes WHERE owner_id = ? AND status != 'disabled'").bind(userId).all<NodeRecord>()).results;
+  return (await db.prepare("SELECT * FROM nodes WHERE owner_id = ? AND status != 'disabled' AND COALESCE(desired_state, 'active') = 'active'").bind(userId).all<NodeRecord>()).results;
 }
 
 subscriptionRoute.get('/api/v1/subscription', authMiddleware, async (c) => {
@@ -76,10 +76,17 @@ subscriptionRoute.get('/api/v1/subscription', authMiddleware, async (c) => {
 
 subscriptionRoute.put('/api/v1/subscription', authMiddleware, async (c) => {
   const currentUser = c.get('user') as JwtUser;
-  const user = await c.env.DB.prepare('SELECT * FROM users WHERE id = ?').bind(currentUser.userId).first<any>();
+  const targetUserId = currentUser.role === 'admin' && c.req.query('user_id')
+    ? Number.parseInt(c.req.query('user_id')!, 10)
+    : currentUser.userId;
+  if (currentUser.role !== 'admin' && c.req.query('user_id')) return c.json({ error: '无权修改其他用户订阅' }, 403);
+  const user = await c.env.DB.prepare('SELECT * FROM users WHERE id = ?').bind(targetUserId).first<any>();
   if (!user) return c.json({ error: 'User not found' }, 404);
 
   const body = await c.req.json();
+  if (currentUser.role !== 'admin' && (body.status !== undefined || body.traffic_limit_bytes !== undefined || body.expire_at !== undefined || body.clear_expiry !== undefined)) {
+    return c.json({ error: '只有管理员可以修改订阅状态、流量限额和到期时间' }, 403);
+  }
   if (body.reset_subscription) {
     const newToken = generateToken(32);
     await c.env.DB.prepare('UPDATE users SET sub_token = ? WHERE id = ?').bind(newToken, user.id).run();
@@ -92,9 +99,15 @@ subscriptionRoute.put('/api/v1/subscription', authMiddleware, async (c) => {
     proxyPassword = body.password;
   }
 
+  const status = body.status !== undefined ? (body.status ? 1 : 0) : user.status;
+  const trafficLimit = body.traffic_limit_bytes !== undefined
+    ? Number.parseInt(String(body.traffic_limit_bytes), 10)
+    : user.traffic_limit_bytes;
+  const expireAt = body.clear_expiry ? null : (body.expire_at !== undefined ? body.expire_at : user.expire_at);
+  if (!Number.isSafeInteger(trafficLimit) || trafficLimit < 0) return c.json({ error: '流量限额无效' }, 400);
   await c.env.DB.prepare(`
-    UPDATE users SET proxy_password = ?, updated_at = datetime('now') WHERE id = ?
-  `).bind(proxyPassword, user.id).run();
+    UPDATE users SET proxy_password = ?, status = ?, traffic_limit_bytes = ?, expire_at = ?, updated_at = datetime('now') WHERE id = ?
+  `).bind(proxyPassword, status, trafficLimit, expireAt, user.id).run();
 
   await bumpConfigVersion(c.env.DB);
   return c.json({ success: true });
@@ -186,7 +199,11 @@ async function handleSubscription(c: AppContext, usernameParam?: string, tokenPa
 
   const endpoints = buildEndpointsForUser(user, nodes, allInbounds, isAllMode);
   const userAgent = c.req.header('User-Agent') || '';
-  const sub = buildSubscription(user, endpoints, userAgent);
+  const requestedFormat = (c.req.query('format') || '').toLowerCase().trim();
+  if (requestedFormat && !['clash', 'singbox', 'base64'].includes(requestedFormat)) {
+    return c.text('Unsupported subscription format', 400);
+  }
+  const sub = buildSubscription(user, endpoints, userAgent, requestedFormat);
 
   for (const [k, v] of Object.entries(sub.headers)) {
     c.header(k, v);

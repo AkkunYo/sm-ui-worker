@@ -9,6 +9,7 @@ import (
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
+	"crypto/sha256"
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/json"
@@ -44,17 +45,20 @@ type Config struct {
 }
 
 type SyncRequest struct {
-	Token         string         `json:"token"`
-	Status        string         `json:"status"`
-	RTTMs         int64          `json:"rtt_ms"`
-	CPUPercent    float64        `json:"cpu_percent"`
-	MemoryPercent float64        `json:"memory_percent"`
-	UptimeSeconds int64          `json:"uptime_seconds"`
-	CoreVersion   string         `json:"core_version"`
-	AgentVersion  string         `json:"agent_version,omitempty"`
-	ConfigVersion int            `json:"config_version"`
-	ConfigHash    string         `json:"config_hash,omitempty"`
-	TrafficDeltas []TrafficDelta `json:"traffic_deltas,omitempty"`
+	ProtocolVersion      int            `json:"protocol_version"`
+	Token                string         `json:"token"`
+	Status               string         `json:"status"`
+	RTTMs                int64          `json:"rtt_ms"`
+	CPUPercent           float64        `json:"cpu_percent"`
+	MemoryPercent        float64        `json:"memory_percent"`
+	UptimeSeconds        int64          `json:"uptime_seconds"`
+	CoreVersion          string         `json:"core_version"`
+	AgentVersion         string         `json:"agent_version,omitempty"`
+	AppliedConfigVersion int            `json:"applied_config_version"`
+	AppliedConfigHash    string         `json:"applied_config_hash,omitempty"`
+	ApplyError           string         `json:"apply_error,omitempty"`
+	TrafficBatchID       string         `json:"traffic_batch_id,omitempty"`
+	TrafficDeltas        []TrafficDelta `json:"traffic_deltas,omitempty"`
 }
 
 type TrafficDelta struct {
@@ -64,11 +68,14 @@ type TrafficDelta struct {
 }
 
 type SyncResponse struct {
-	Status        string          `json:"status"`
-	ConfigVersion int             `json:"config_version"`
-	ConfigHash    string          `json:"config_hash,omitempty"`
-	Reload        bool            `json:"reload"`
-	Config        json.RawMessage `json:"config,omitempty"`
+	ProtocolVersion        int             `json:"protocol_version"`
+	Status                 string          `json:"status"`
+	DesiredState           string          `json:"desired_state"`
+	ConfigVersion          int             `json:"config_version"`
+	ConfigHash             string          `json:"config_hash,omitempty"`
+	Reload                 bool            `json:"reload"`
+	Config                 json.RawMessage `json:"config,omitempty"`
+	AcceptedTrafficBatchID string          `json:"accepted_traffic_batch_id,omitempty"`
 }
 
 var (
@@ -77,19 +84,19 @@ var (
 	GitCommit = "none"
 	BuildTime = "unknown"
 
-	procMu           sync.Mutex
-	singBoxCmd       *exec.Cmd
-	cpuMu            sync.Mutex
-	lastTotalCP      uint64
-	lastIdleCP       uint64
-	pendingTrafficMu sync.Mutex
-	pendingTraffic   = make(map[string]*TrafficDelta)
+	procMu      sync.Mutex
+	singBoxCmd  *exec.Cmd
+	cpuMu       sync.Mutex
+	lastTotalCP uint64
+	lastIdleCP  uint64
 )
+
+const protocolVersion = 2
 
 func main() {
 	var cfg Config
 	showVersion := flag.Bool("version", false, "Print agent version and exit")
-	flag.StringVar(&cfg.MasterURL, "master", os.Getenv("MASTER_URL"), "Cloudflare Worker Master API URL (e.g. https://sm-ui.your-worker.workers.dev)")
+	flag.StringVar(&cfg.MasterURL, "master", os.Getenv("MASTER_URL"), "Cloudflare Worker Master API URL")
 	flag.StringVar(&cfg.NodeToken, "token", os.Getenv("NODE_TOKEN"), "Node HostId Token UUID")
 	flag.StringVar(&cfg.BaseDir, "dir", "/var/lib/sm-ui", "Base directory for runtime configs and certs")
 	intervalSec := flag.Int("interval", 30, "Sync polling interval in seconds")
@@ -99,7 +106,6 @@ func main() {
 		fmt.Printf("sm-node version %s (commit: %s, built: %s)\n", Version, GitCommit, BuildTime)
 		os.Exit(0)
 	}
-
 	if envDir := os.Getenv("BASE_DIR"); envDir != "" {
 		cfg.BaseDir = envDir
 	}
@@ -109,11 +115,9 @@ func main() {
 		}
 	}
 	cfg.Interval = time.Duration(*intervalSec) * time.Second
-
 	if cfg.MasterURL == "" || cfg.NodeToken == "" {
 		log.Fatalf("Fatal: MASTER_URL and NODE_TOKEN must be specified via environment variables or flags.")
 	}
-
 	cfg.MasterURL = strings.TrimRight(cfg.MasterURL, "/")
 
 	log.Printf("==================================================")
@@ -122,38 +126,44 @@ func main() {
 	log.Printf("  Token UUID: %s***", cfg.NodeToken[:min(6, len(cfg.NodeToken))])
 	log.Printf("  Base Dir:   %s", cfg.BaseDir)
 	log.Printf("  Interval:   %v", cfg.Interval)
+	log.Printf("  Protocol:   v%d", protocolVersion)
 	log.Printf("==================================================")
 
-	// Ensure directories and certs
 	_ = os.MkdirAll(filepath.Join(cfg.BaseDir, "bin"), 0755)
 	_ = os.MkdirAll(filepath.Join(cfg.BaseDir, "configs"), 0755)
 	_ = os.MkdirAll(filepath.Join(cfg.BaseDir, "certs"), 0755)
+	stateStore := NewStateStore(filepath.Join(cfg.BaseDir, "agent-state.json"))
+	state, err := stateStore.Load()
+	if err != nil {
+		log.Fatalf("Fatal: cannot load durable agent state: %v", err)
+	}
 	ensureSelfSignedCert(filepath.Join(cfg.BaseDir, "certs", "selfsigned.crt"), filepath.Join(cfg.BaseDir, "certs", "selfsigned.key"))
 	ensureSelfSignedCert(filepath.Join(cfg.BaseDir, "certs", "hy2.crt"), filepath.Join(cfg.BaseDir, "certs", "hy2.key"))
 
-	// Ensure sing-box binary
 	if err := ensureSingBoxBinary(cfg.BaseDir); err != nil {
 		log.Printf("Warning: sing-box binary preparation warning: %v", err)
 	}
 
-	// Cold start cached config if present
 	cachedConfig := filepath.Join(cfg.BaseDir, "configs", "current.json")
-	if _, err := os.Stat(cachedConfig); err == nil {
-		log.Printf("Cached configuration found at %s, starting sing-box...", cachedConfig)
-		_ = startSingBox(cfg.BaseDir, cachedConfig)
+	if state.DesiredState == "active" {
+		if _, err := os.Stat(cachedConfig); err == nil {
+			log.Printf("Cached configuration found at %s, starting sing-box...", cachedConfig)
+			if err := startSingBox(cfg.BaseDir, cachedConfig); err != nil {
+				log.Printf("Cached configuration start failed: %v", err)
+			}
+		} else {
+			log.Printf("No local configuration yet. Fetching initial configuration from Master...")
+		}
 	} else {
-		log.Printf("No local configuration yet. Fetching initial configuration from Master...")
+		log.Printf("Node desired state is %q; keeping sing-box stopped until Master changes it.", state.DesiredState)
 	}
 
 	stopChan := make(chan os.Signal, 1)
 	signal.Notify(stopChan, syscall.SIGINT, syscall.SIGTERM)
-
-	currentConfigVer := 0
+	currentConfigVer := state.AppliedConfigVersion
 	ticker := time.NewTicker(cfg.Interval)
 	defer ticker.Stop()
-
-	// Initial immediate sync
-	currentConfigVer = syncWithMaster(cfg, currentConfigVer)
+	currentConfigVer = syncWithMaster(cfg, currentConfigVer, stateStore)
 
 	for {
 		select {
@@ -163,15 +173,20 @@ func main() {
 			log.Printf("Agent stopped.")
 			return
 		case <-ticker.C:
-			currentConfigVer = syncWithMaster(cfg, currentConfigVer)
+			currentConfigVer = syncWithMaster(cfg, currentConfigVer, stateStore)
 		}
 	}
 }
 
-func syncWithMaster(cfg Config, currentVer int) int {
-	// Health watchdog: auto-recover sing-box if process exited unexpectedly
+func syncWithMaster(cfg Config, currentVer int, stateStore *StateStore) int {
+	state, err := stateStore.Load()
+	if err != nil {
+		log.Printf("[State] Load failed: %v", err)
+		return currentVer
+	}
+
 	procMu.Lock()
-	if singBoxCmd == nil {
+	if state.DesiredState == "active" && singBoxCmd == nil {
 		currentPath := filepath.Join(cfg.BaseDir, "configs", "current.json")
 		if _, err := os.Stat(currentPath); err == nil {
 			log.Printf("[Watchdog] sing-box core is stopped, attempting recovery restart...")
@@ -181,65 +196,64 @@ func syncWithMaster(cfg Config, currentVer int) int {
 		}
 	}
 	nodeStatus := "online"
-	if singBoxCmd == nil {
-		nodeStatus = "offline"
+	if state.DesiredState != "active" {
+		procMu.Unlock()
+		stopSingBox()
+		nodeStatus = "stopped"
+	} else {
+		if singBoxCmd == nil {
+			nodeStatus = "offline"
+		}
+		procMu.Unlock()
 	}
-	procMu.Unlock()
 
-	cpu := readCPUPercent()
-	mem := readMemPercent()
-	uptime := readSystemUptime()
-	rtt := measureRTT(cfg.MasterURL)
-
-	// Fetch fresh deltas and accumulate into pendingTraffic buffer
 	freshDeltas := queryTrafficDeltas()
 	if len(freshDeltas) > 0 {
 		log.Printf("[Traffic] Captured deltas for %d users from sing-box", len(freshDeltas))
-	}
-
-	pendingTrafficMu.Lock()
-	for _, d := range freshDeltas {
-		acc, exists := pendingTraffic[d.Username]
-		if !exists {
-			acc = &TrafficDelta{Username: d.Username}
-			pendingTraffic[d.Username] = acc
-		}
-		acc.Uplink += d.Uplink
-		acc.Downlink += d.Downlink
-	}
-
-	// Snapshot all buffered deltas to report in this heartbeat
-	trafficDeltas := make([]TrafficDelta, 0, len(pendingTraffic))
-	for _, d := range pendingTraffic {
-		if d.Uplink > 0 || d.Downlink > 0 {
-			trafficDeltas = append(trafficDeltas, *d)
+		batchID, idErr := newBatchID()
+		if idErr != nil {
+			log.Printf("[Traffic] Cannot create batch ID: %v", idErr)
+		} else if err := stateStore.Update(func(s *AgentState) error {
+			s.PendingTraffic = append(s.PendingTraffic, TrafficBatch{ID: batchID, Deltas: freshDeltas})
+			return nil
+		}); err != nil {
+			log.Printf("[Traffic] Cannot persist batch: %v", err)
 		}
 	}
-	pendingTrafficMu.Unlock()
+	state, err = stateStore.Load()
+	if err != nil {
+		log.Printf("[State] Reload failed: %v", err)
+		return currentVer
+	}
 
-	currentHashBytes, _ := os.ReadFile(filepath.Join(cfg.BaseDir, "configs", "current.hash"))
-	currentHash := strings.TrimSpace(string(currentHashBytes))
-
+	var batchID string
+	var trafficDeltas []TrafficDelta
+	if len(state.PendingTraffic) > 0 {
+		batchID = state.PendingTraffic[0].ID
+		trafficDeltas = state.PendingTraffic[0].Deltas
+	}
 	reqPayload := SyncRequest{
-		Token:         cfg.NodeToken,
-		Status:        nodeStatus,
-		RTTMs:         rtt,
-		CPUPercent:    cpu,
-		MemoryPercent: mem,
-		UptimeSeconds: uptime,
-		CoreVersion:   "v1.14.2",
-		AgentVersion:  Version,
-		ConfigVersion: currentVer,
-		ConfigHash:    currentHash,
-		TrafficDeltas: trafficDeltas,
+		ProtocolVersion:      protocolVersion,
+		Token:                cfg.NodeToken,
+		Status:               nodeStatus,
+		RTTMs:                measureRTT(cfg.MasterURL),
+		CPUPercent:           readCPUPercent(),
+		MemoryPercent:        readMemPercent(),
+		UptimeSeconds:        readSystemUptime(),
+		CoreVersion:          "v1.14.2",
+		AgentVersion:         Version,
+		AppliedConfigVersion: state.AppliedConfigVersion,
+		AppliedConfigHash:    state.AppliedConfigHash,
+		ApplyError:           state.LastApplyError,
+		TrafficBatchID:       batchID,
+		TrafficDeltas:        trafficDeltas,
 	}
 
 	data, err := json.Marshal(reqPayload)
 	if err != nil {
 		return currentVer
 	}
-
-	syncURL := fmt.Sprintf("%s/api/v1/node/sync", cfg.MasterURL)
+	syncURL := fmt.Sprintf("%s/api/v2/node/sync", cfg.MasterURL)
 	req, err := http.NewRequest("POST", syncURL, bytes.NewBuffer(data))
 	if err != nil {
 		return currentVer
@@ -254,50 +268,88 @@ func syncWithMaster(cfg Config, currentVer int) int {
 		return currentVer
 	}
 	defer resp.Body.Close()
-
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
 		log.Printf("[Heartbeat] Master responded with status %d: %s", resp.StatusCode, string(body))
+		if resp.StatusCode == http.StatusUnauthorized {
+			_ = stateStore.Update(func(s *AgentState) error { s.DesiredState = "revoked"; return nil })
+			stopSingBox()
+		}
 		return currentVer
 	}
-
-	// Master confirmed receipt (HTTP 200): deduct the successfully reported deltas from buffer
-	pendingTrafficMu.Lock()
-	for _, reported := range trafficDeltas {
-		if acc, ok := pendingTraffic[reported.Username]; ok {
-			acc.Uplink -= reported.Uplink
-			acc.Downlink -= reported.Downlink
-			if acc.Uplink <= 0 && acc.Downlink <= 0 {
-				delete(pendingTraffic, reported.Username)
-			}
-		}
-	}
-	pendingTrafficMu.Unlock()
 
 	var syncResp SyncResponse
 	if err := json.NewDecoder(resp.Body).Decode(&syncResp); err != nil {
 		return currentVer
+	}
+	if syncResp.ProtocolVersion != protocolVersion {
+		log.Printf("[Heartbeat] Unsupported master protocol version %d", syncResp.ProtocolVersion)
+		return currentVer
+	}
+	if syncResp.AcceptedTrafficBatchID != "" {
+		if err := stateStore.AcknowledgeTraffic(syncResp.AcceptedTrafficBatchID); err != nil {
+			log.Printf("[Traffic] Cannot acknowledge batch %s: %v", syncResp.AcceptedTrafficBatchID, err)
+		}
+	}
+	if syncResp.DesiredState != "" && syncResp.DesiredState != state.DesiredState {
+		if err := stateStore.Update(func(s *AgentState) error {
+			s.DesiredState = syncResp.DesiredState
+			return nil
+		}); err != nil {
+			log.Printf("[State] Cannot persist desired state: %v", err)
+		}
+		if syncResp.DesiredState != "active" {
+			stopSingBox()
+		}
 	}
 
 	if syncResp.Reload && len(syncResp.Config) > 0 {
 		log.Printf("[Sync] New configuration received (version: %d, hash: %s). Applying...", syncResp.ConfigVersion, syncResp.ConfigHash)
 		if err := applyConfiguration(cfg.BaseDir, syncResp.Config, syncResp.ConfigHash); err != nil {
 			log.Printf("[Sync] Failed to apply configuration: %v", err)
-		} else {
-			log.Printf("[Sync] Configuration v%d applied successfully!", syncResp.ConfigVersion)
-			return syncResp.ConfigVersion
+			_ = stateStore.Update(func(s *AgentState) error { s.LastApplyError = err.Error(); return nil })
+			return currentVer
 		}
+		log.Printf("[Sync] Configuration v%d applied successfully!", syncResp.ConfigVersion)
+		_ = stateStore.Update(func(s *AgentState) error {
+			s.AppliedConfigVersion = syncResp.ConfigVersion
+			s.AppliedConfigHash = syncResp.ConfigHash
+			s.LastApplyError = ""
+			return nil
+		})
+		return syncResp.ConfigVersion
 	}
 
-	return syncResp.ConfigVersion
+	if !syncResp.Reload {
+		// A no-reload response is not an application acknowledgement. The
+		// master may be returning a stop command or merely reporting desired
+		// state; only applyConfiguration() advances durable applied state.
+		return currentVer
+	}
+	return currentVer
+}
+
+func newBatchID() (string, error) {
+	var raw [16]byte
+	if _, err := rand.Read(raw[:]); err != nil {
+		return "", err
+	}
+	return fmt.Sprintf("%x", raw[:]), nil
 }
 
 func applyConfiguration(baseDir string, configBytes []byte, configHash string) error {
 	nextPath := filepath.Join(baseDir, "configs", "next.json")
 	currentPath := filepath.Join(baseDir, "configs", "current.json")
+	previousPath := filepath.Join(baseDir, "configs", "previous.json")
 	hashPath := filepath.Join(baseDir, "configs", "current.hash")
 	binPath := filepath.Join(baseDir, "bin", "sing-box")
 
+	if configHash != "" {
+		actual := fmt.Sprintf("%x", sha256.Sum256(configBytes))
+		if !strings.EqualFold(actual, strings.TrimSpace(configHash)) {
+			return fmt.Errorf("configuration hash mismatch: expected %s, got %s", configHash, actual)
+		}
+	}
 	if err := os.WriteFile(nextPath, configBytes, 0644); err != nil {
 		return err
 	}
@@ -310,6 +362,15 @@ func applyConfiguration(baseDir string, configBytes []byte, configHash string) e
 		}
 	}
 
+	// Keep the last known-good configuration so a reload or process health
+	// failure never strands the node on an unverified file.
+	previous, previousErr := os.ReadFile(currentPath)
+	if previousErr == nil {
+		if err := os.WriteFile(previousPath, previous, 0644); err != nil {
+			return err
+		}
+	}
+
 	// Atomic swap config
 	if err := os.Rename(nextPath, currentPath); err != nil {
 		return err
@@ -317,6 +378,11 @@ func applyConfiguration(baseDir string, configBytes []byte, configHash string) e
 
 	// Reload or Start
 	if err := reloadSingBox(baseDir, currentPath); err != nil {
+		if previousErr == nil {
+			_ = os.WriteFile(currentPath, previous, 0644)
+		} else {
+			_ = os.Remove(currentPath)
+		}
 		return err
 	}
 
@@ -327,6 +393,7 @@ func applyConfiguration(baseDir string, configBytes []byte, configHash string) e
 			log.Printf("[Sync] Failed to persist config hash: %v", err)
 		}
 	}
+	_ = os.Remove(previousPath)
 	return nil
 }
 
@@ -387,6 +454,13 @@ func startSingBoxLocked(baseDir, configPath string) error {
 		procMu.Unlock()
 		log.Printf("sing-box process exited.")
 	}()
+
+	// A process that exits immediately after Start is not a successful apply.
+	// Give sing-box a short health window before acknowledging the config.
+	time.Sleep(500 * time.Millisecond)
+	if err := cmd.Process.Signal(syscall.Signal(0)); err != nil {
+		return fmt.Errorf("sing-box exited during health check")
+	}
 
 	return nil
 }

@@ -9,9 +9,13 @@ import type { AppBindings, AppVariables, JwtUser } from '../types';
 
 export const authRoute = new Hono<{ Bindings: AppBindings; Variables: AppVariables }>();
 
+const SESSION_MAX_AGE = 7 * 24 * 60 * 60;
+const sessionCookie = (token: string) => `sm_ui_session=${token}; Path=/; HttpOnly; Secure; SameSite=Strict; Max-Age=${SESSION_MAX_AGE}`;
+const clearSessionCookie = 'sm_ui_session=; Path=/; HttpOnly; Secure; SameSite=Strict; Max-Age=0';
+
 authRoute.get('/api/v1/system/setup/status', async (c) => {
   const initialized = await isSetupCompleted(c.env.DB);
-  return c.json({ is_initialized: initialized, version: '1.15.3' });
+  return c.json({ is_initialized: initialized, version: '2.0.0', protocol_version: 2 });
 });
 
 authRoute.post('/api/v1/system/setup', async (c) => {
@@ -28,45 +32,55 @@ authRoute.post('/api/v1/system/setup', async (c) => {
   if (password.length < 6) return c.json({ error: '密码长度不能少于 6 位' }, 400);
   if (password !== confirmPassword) return c.json({ error: '两次输入的密码不一致' }, 400);
 
+  // Claim setup exactly once before doing expensive hashing or writes. A
+  // concurrent request that loses this insert cannot create a second admin.
+  const claim = await c.env.DB.prepare(`
+    INSERT OR IGNORE INTO system_settings (key, value) VALUES ('setup_lock', ?)
+  `).bind(crypto.randomUUID()).run();
+  if (!claim.meta.changes) {
+    return c.json({ error: '系统初始化正在进行或已完成，请刷新后重试' }, 409);
+  }
+
   const hashed = await hashPassword(password);
   const subToken = generateToken(32);
   const uuid = generateUUID();
   const proxyPassword = generateToken(16);
 
-  // Create superadmin user (ID: 1, role: 'admin')
-  const res = await c.env.DB.prepare(`
-    INSERT INTO users (username, password_hash, role, uuid, proxy_password, sub_token, status)
-    VALUES (?, ?, 'admin', ?, ?, ?, 1)
-  `).bind(username, hashed, uuid, proxyPassword, subToken).run();
+  try {
+    // Create the complete initial state in one D1 batch. The setup lock is
+    // intentionally retained as a durable one-time marker.
+    const keys = generateRealityKeyPair();
+    const shortId = generateToken(16);
+    const results = await c.env.DB.batch([
+      c.env.DB.prepare(`
+        INSERT INTO users (username, password_hash, role, uuid, proxy_password, sub_token, status)
+        VALUES (?, ?, 'admin', ?, ?, ?, 1)
+      `).bind(username, hashed, uuid, proxyPassword, subToken),
+      c.env.DB.prepare(`
+        INSERT INTO inbound_templates (
+          owner_id, name, protocol, reality_dest, reality_server_name, reality_private_key, reality_public_key, reality_short_id, is_default
+        ) VALUES (NULL, '默认 VLESS Reality', 'vless', 'www.amazon.com:443', 'www.amazon.com', ?, ?, ?, 1)
+      `).bind(keys.privateKey, keys.publicKey, shortId),
+      c.env.DB.prepare(`
+        INSERT INTO inbound_templates (
+          owner_id, name, protocol, hy2_up_mbps, hy2_down_mbps, hy2_masquerade, is_default
+        ) VALUES (NULL, '默认 Hysteria 2', 'hysteria2', 100, 100, 'https://bing.com', 1)
+      `),
+      c.env.DB.prepare("INSERT OR REPLACE INTO system_settings (key, value) VALUES ('setup_completed', 'true')"),
+      c.env.DB.prepare("UPDATE system_settings SET value = 'completed', updated_at = datetime('now') WHERE key = 'setup_lock'")
+    ]);
+    const adminId = results[0]?.meta?.last_row_id || 1;
 
-  const adminId = res.meta.last_row_id || 1;
+    const secret = await getJwtSecret(c.env.DB);
+    const token = await sign({ userId: adminId, username, role: 'admin', exp: Math.floor(Date.now() / 1000) + 86400 * 7 }, secret, 'HS256');
 
-  // Create default global inbound templates (VLESS Reality & Hysteria 2)
-  const keys = generateRealityKeyPair();
-  const shortId = generateToken(16);
-  await c.env.DB.prepare(`
-    INSERT INTO inbound_templates (
-      owner_id, name, protocol, reality_dest, reality_server_name, reality_private_key, reality_public_key, reality_short_id, is_default
-    ) VALUES (NULL, '默认 VLESS Reality', 'vless', 'www.amazon.com:443', 'www.amazon.com', ?, ?, ?, 1)
-  `).bind(keys.privateKey, keys.publicKey, shortId).run();
-
-  await c.env.DB.prepare(`
-    INSERT INTO inbound_templates (
-      owner_id, name, protocol, hy2_up_mbps, hy2_down_mbps, hy2_masquerade, is_default
-    ) VALUES (NULL, '默认 Hysteria 2', 'hysteria2', 100, 100, 'https://bing.com', 1)
-  `).run();
-
-  // Mark setup completed
-  await c.env.DB.prepare("INSERT OR REPLACE INTO system_settings (key, value) VALUES ('setup_completed', 'true')").run();
-
-  const secret = await getJwtSecret(c.env.DB);
-  const token = await sign({ userId: adminId, username, role: 'admin', exp: Math.floor(Date.now() / 1000) + 86400 * 7 }, secret, 'HS256');
-
-  return c.json({
-    success: true,
-    token,
-    user: { id: adminId, username, role: 'admin' }
-  });
+    c.header('Set-Cookie', sessionCookie(token));
+    return c.json({ success: true, user: { id: adminId, username, role: 'admin' } });
+  } catch (error) {
+    await c.env.DB.prepare("DELETE FROM system_settings WHERE key = 'setup_lock' AND value != 'completed'").run().catch(() => {});
+    console.error('[setup] initialization failed', error);
+    return c.json({ error: '系统初始化失败，请稍后重试' }, 500);
+  }
 });
 
 authRoute.post('/api/v1/auth/login', async (c) => {
@@ -100,10 +114,13 @@ authRoute.post('/api/v1/auth/login', async (c) => {
   const secret = await getJwtSecret(c.env.DB);
   const token = await sign({ userId: user.id, username: user.username, role: user.role, exp: Math.floor(Date.now() / 1000) + 86400 * 7 }, secret, 'HS256');
 
-  return c.json({
-    token,
-    user: { id: user.id, username: user.username, role: user.role }
-  });
+  c.header('Set-Cookie', sessionCookie(token));
+  return c.json({ user: { id: user.id, username: user.username, role: user.role } });
+});
+
+authRoute.post('/api/v1/auth/logout', async (c) => {
+  c.header('Set-Cookie', clearSessionCookie);
+  return c.json({ success: true });
 });
 
 authRoute.get('/api/v1/system/profile', authMiddleware, async (c) => {

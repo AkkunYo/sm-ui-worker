@@ -26,7 +26,7 @@ const server = createServer(async (req, res) => {
   if (req.url.startsWith('/unauthorized')) res.statusCode = 401
   if (req.url === '/unavailable') res.statusCode = 503
   res.setHeader('Content-Type', 'application/json')
-  res.end(JSON.stringify(req.url === '/unavailable' ? { error: '暂时不可用' } : { authorization: req.headers.authorization, method: req.method }))
+  res.end(JSON.stringify(req.url === '/unavailable' ? { error: '暂时不可用' } : { authorization: req.headers.authorization, cookie: req.headers.cookie, method: req.method }))
 })
 
 before(async () => {
@@ -46,7 +46,7 @@ after(async () => {
 })
 
 test('preserves authentication, method and successful JSON responses', async () => {
-  assert.deepEqual(await request(base + '/ok', { method: 'POST', body: '{}' }), { authorization: 'Bearer test-session', method: 'POST' })
+  assert.deepEqual(await request(base + '/ok', { method: 'POST', body: '{}' }), { method: 'POST' })
 })
 
 for (const path of ['/stall', '/stall-body']) {

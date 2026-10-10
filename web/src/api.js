@@ -12,7 +12,7 @@ export function setToken(token) {
 export function removeToken() {
   localStorage.removeItem(TOKEN_KEY)
   localStorage.removeItem(USER_KEY)
-  if (typeof window !== 'undefined') {
+  if (typeof window !== 'undefined' && typeof window.dispatchEvent === 'function') {
     window.dispatchEvent(new CustomEvent('auth-changed'))
   }
 }
@@ -34,7 +34,7 @@ export function setUser(user) {
   } else {
     localStorage.removeItem(USER_KEY)
   }
-  if (typeof window !== 'undefined') {
+  if (typeof window !== 'undefined' && typeof window.dispatchEvent === 'function') {
     window.dispatchEvent(new CustomEvent('auth-changed'))
   }
 }
@@ -45,9 +45,6 @@ export async function request(path, options = {}) {
   const headers = {
     'Content-Type': 'application/json',
     ...(options.headers || {})
-  }
-  if (token) {
-    headers['Authorization'] = `Bearer ${token}`
   }
 
   const controller = new AbortController()
@@ -64,6 +61,7 @@ export async function request(path, options = {}) {
     const res = await fetch(path, {
       ...fetchOptions,
       headers,
+      credentials: 'include',
       signal: controller.signal
     })
 

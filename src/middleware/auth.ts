@@ -3,11 +3,11 @@ import { getJwtSecret } from '../db';
 import type { AppContext, JwtUser } from '../types';
 
 export const authMiddleware = async (c: AppContext, next: any) => {
-  const authHeader = c.req.header('Authorization');
-  if (!authHeader || !authHeader.startsWith('Bearer ')) {
+  const cookieHeader = c.req.header('Cookie') || '';
+  const token = cookieHeader.match(/(?:^|;\s*)sm_ui_session=([^;]+)/)?.[1];
+  if (!token) {
     return c.json({ error: 'Unauthorized' }, 401);
   }
-  const token = authHeader.substring(7);
   const secret = await getJwtSecret(c.env.DB);
   try {
     const payload = (await verify(token, secret, 'HS256')) as unknown as JwtUser;
