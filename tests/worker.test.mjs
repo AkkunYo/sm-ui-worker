@@ -138,6 +138,12 @@ test('disable/revoke directs stop and preserves node identity, endpoint and toke
   assert.deepEqual(n,{token:'node-1',server_ip:'192.0.2.1'});
 });
 test('legacy synchronization endpoint is removed', async()=>assert.equal((await request('/api/v1/node/sync',{})).status,404));
+test('controller reports the package.json version that the agent build also stamps', async () => {
+  const pkg = JSON.parse(readFileSync('package.json', 'utf8'));
+  const status = await (await mf.dispatchFetch('https://test.local/api/v1/system/setup/status')).json();
+  assert.equal(status.version, pkg.version);
+  assert.equal(status.protocol_version, heartbeat.protocol_version);
+});
 test('explicit format wins over User Agent and subscription credentials stay unchanged',async()=>{
   const res=await mf.dispatchFetch('https://test.local/sub/alice/sub-2?format=singbox',{headers:{'User-Agent':'Clash'}});
   assert.equal(res.status,200);

@@ -2,9 +2,9 @@ import { Hono } from 'hono';
 import { buildServerConfig, type NodeRecord, type UserRecord } from '../protocol';
 import { getInboundsForServer } from '../repo/inbounds';
 import { sha256Hex } from '../lib/crypto';
+import { PROTOCOL_VERSION } from '../version';
 import type { AppBindings, AppVariables } from '../types';
 
-const PROTOCOL_VERSION = 2;
 const MAX_DELTA_BYTES = 500 * 1024 * 1024 * 1024;
 const MAX_TRAFFIC_DELTAS = 256;
 

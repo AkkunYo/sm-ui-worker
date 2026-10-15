@@ -13,17 +13,19 @@
 2. **主从通信 (方案 A: HTTP Pull Sync 轮询拉取)**：
    - 各 VPS 节点运行轻量 Go 守护进程 (`agent/sm-node v2.1.0`)；
    - 默认每 30 秒向 Master 发送 `POST /api/v2/node/sync`，上报状态、延迟、CPU、内存、Uptime 以及用户流量消耗增量；
-   - **单节点配置 Hash 判定**：Master 按节点内容哈希 (`desired_config_hash`) 判定更新，彻底规避全局版本号递增引发的无关节点级联重载；
-   - **租户级 Reality 密钥隔离**：每个租户独立生成 X25519 密钥对，节点仅下发所属租户的私钥，从源头杜绝跨租户私钥外泄；
-   - **Agent 状态持久化与自愈回滚**：本地持久化 `agent-state.json`（待确认流量批次、期望状态、失败哈希与冷却机制），启动时执行真实健康检查，新配置启动失败毫秒级安全回滚上一份配置；
-   - **幂等流量收据**：流量批次按 `(node_id, batch_id)` 原子结算与确认，失效批次自动熔断出队，绝不阻断后续节点配置下发。
+   - **单节点配置 Hash 判定**：Master 只按该节点自身配置内容的哈希 (`desired_config_hash`) 判定是否下发，修改其他租户或节点不会让本节点重载；
+   - **租户级 Reality 密钥隔离**：每个租户独立一对 X25519 密钥，节点只收到所属租户的私钥；
+   - **Agent 状态持久化与回滚**：本地持久化 `agent-state.json`（待确认流量批次、期望状态、失败配置哈希与 10 分钟重试冷却）。应用新配置时先停止旧核心再启动新配置，经约 3 秒健康检查确认存活；启动失败则恢复并重启上一份配置，整个过程约 3~8 秒；
+   - **幂等流量收据**：流量批次按 `(node_id, batch_id)` 原子结算，重复提交只计一次；不属于节点所属租户的流量记录会被丢弃并记日志，批次照常确认出队，不会阻断配置下发。
+   - **版本一致**：`package.json` 的 `version` 是唯一版本来源，Worker (`src/version.ts`) 与 Agent (`scripts/build-agent.sh` 注入) 使用同一版本号；发布 tag 必须等于 `v<version>`。
    - **优势**：无状态，规避 WebSocket 挂载时间限制，完全运行在 Cloudflare 免费版额度内，容错率极高。
-3. **多协议与端口跳跃支持**：
-   - 节点标准监听 2096/TCP (VLESS Reality) 与 2096/UDP (Hysteria 2)，支持 iptables 范围跳跃端口转发；
+3. **多协议与端口跳跃**：
+   - 节点标准监听 2096/TCP (VLESS Reality) 与 2096/UDP (Hysteria 2)；
+   - Hysteria 2 端口跳跃依赖 VPS 上手工配置的 UDP 端口范围转发（iptables/nftables），项目只负责在订阅中输出跳跃端口，不管理转发规则；
 4. **全客户端自适应通用订阅**：
    - 访问 `/sub/:username/:token` 或 `/sub/:token`，自动嗅探 User-Agent 或显式 `format=clash|singbox|base64`：
      - Mihomo / Clash: YAML 配置 (含分流规则与 url-test 自动选线)
-     - Sing-box 1.14+: 官方原生 JSON 配置 (原生支持 Hysteria 2 `server_ports` 跳跃)
+     - Sing-box 1.11+: 官方原生 JSON 配置 (Hysteria 2 跳跃使用 `server_ports`，该字段自 1.11.0 起支持)
      - 通用客户端: Base64 聚合链接 (兼容 NekoBox `mport` 规范)
    - 附带 `Subscription-Userinfo` 头部，客户端实时显示已用与总流量。
 

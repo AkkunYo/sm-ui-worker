@@ -1,14 +1,15 @@
 {
   "name": "sm-ui-worker",
-  "version": "2.0.0",
+  "version": "2.1.0",
   "description": "Serverless SingBox Matrix UI control plane running on Cloudflare Workers & D1",
   "main": "src/index.ts",
   "type": "module",
   "scripts": {
     "dev": "wrangler dev",
-    "test": "node --test tests/worker.test.mjs && (cd agent && go test -race ./...)",
+    "test": "node --test tests/worker.test.mjs && (cd agent && go test -race -count=1 ./...)",
     "typecheck": "tsc --noEmit",
     "build:web": "cd web && (test -d node_modules || npm install --no-audit --no-fund) && npm run build",
+    "build:agent": "bash scripts/build-agent.sh",
     "build": "node scripts/prepare-deploy.js && npm run build:web",
     "deploy": "npm run build && node scripts/validate-deploy-config.js && wrangler deploy --config .wrangler.generated.jsonc",
     "cf-typegen": "wrangler types"

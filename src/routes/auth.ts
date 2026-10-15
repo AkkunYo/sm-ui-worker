@@ -5,6 +5,7 @@ import { generateRealityKeyPair, generateToken, generateUUID } from '../keys';
 import { loginGuardKeys, getLockRemaining, recordLoginFailure, clearLoginFailures } from '../login-guard';
 import { hashPassword, verifyPassword, DUMMY_PASSWORD_HASH } from '../lib/crypto';
 import { authMiddleware } from '../middleware/auth';
+import { APP_VERSION, PROTOCOL_VERSION } from '../version';
 import type { AppBindings, AppVariables, JwtUser } from '../types';
 
 export const authRoute = new Hono<{ Bindings: AppBindings; Variables: AppVariables }>();
@@ -15,7 +16,7 @@ const clearSessionCookie = 'sm_ui_session=; Path=/; HttpOnly; Secure; SameSite=S
 
 authRoute.get('/api/v1/system/setup/status', async (c) => {
   const initialized = await isSetupCompleted(c.env.DB);
-  return c.json({ is_initialized: initialized, version: '2.0.0', protocol_version: 2 });
+  return c.json({ is_initialized: initialized, version: APP_VERSION, protocol_version: PROTOCOL_VERSION });
 });
 
 authRoute.post('/api/v1/system/setup', async (c) => {
