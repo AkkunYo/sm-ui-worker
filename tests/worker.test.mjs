@@ -24,9 +24,9 @@ before(async () => {
 after(async () => { await mf?.dispose(); });
 beforeEach(async () => {
   for (const table of ['traffic_receipts','node_inbounds','nodes','inbound_templates','users','system_settings','login_attempts']) await sql(`DELETE FROM ${table}`);
-  await sql("INSERT INTO system_settings(key,value) VALUES('jwt_secret',?),('config_version','14'),('setup_completed','true')",secret);
+  await sql("INSERT INTO system_settings(key,value) VALUES('jwt_secret',?),('setup_completed','true')",secret);
   for (const [id, name, role] of [[1,'admin','admin'],[2,'alice','user'],[3,'bob','user']]) await sql("INSERT INTO users(id,username,password_hash,role,uuid,proxy_password,sub_token) VALUES(?,?, 'hash',?,?,?,?)",id,name,role,'uuid-'+id,'password-'+id,'sub-'+id);
-  for (const [id,owner] of [[1,null],[2,null],[3,3]]) await sql("INSERT INTO inbound_templates(id,owner_id,name,protocol,reality_private_key,reality_public_key) VALUES(?,?,?,'vless',?,?)",id,owner,'template-'+id,'private-'+id,'public-'+id);
+  for (const [id,owner] of [[1,null],[2,null],[3,3]]) await sql("INSERT INTO inbound_templates(id,owner_id,name,protocol) VALUES(?,?,?,'vless')",id,owner,'template-'+id);
   await sql("UPDATE inbound_templates SET protocol='hysteria2' WHERE id=2");
   await sql("INSERT INTO nodes(id,owner_id,name,server_ip,token,status,desired_config_version) VALUES(1,2,'original','192.0.2.1','node-1','online',14)");
   await sql("INSERT INTO node_inbounds(id,node_id,template_id,listen_port,enabled) VALUES(99,1,1,2096,1)");
@@ -53,13 +53,65 @@ test('duplicate slots fail without changing node fields or losing existing slots
   assert.equal((await row('SELECT name FROM nodes WHERE id=1')).name,'original');
   assert.equal((await row('SELECT COUNT(*) n FROM node_inbounds WHERE node_id=1')).n,1);
 });
-test('traffic retry counts once, rejects changed payload under same ID and invalid batches', async () => {
+test('traffic retry counts once; replayed or foreign batches are settled without counting or blocking config', async () => {
   const payload={traffic_batch_id:'batch-1',traffic_deltas:[{username:'alice',uplink:100,downlink:200}]};
   for(let i=0;i<2;i++) assert.equal((await sync(payload)).status,200);
   assert.equal((await row('SELECT used_up_bytes FROM users WHERE id=2')).used_up_bytes,100);
   assert.equal((await row('SELECT used_down_bytes FROM nodes WHERE id=1')).used_down_bytes,200);
-  assert.equal((await sync({...payload,traffic_deltas:[{username:'alice',uplink:300,downlink:200}]})).status,409);
-  assert.equal((await sync({traffic_batch_id:'batch-2',traffic_deltas:[{username:'bob',uplink:10,downlink:0}]})).status,400);
+  let res=await sync({...payload,traffic_deltas:[{username:'alice',uplink:300,downlink:200}]});
+  assert.equal(res.status,200);
+  assert.equal((await res.json()).accepted_traffic_batch_id,'batch-1');
+  res=await sync({traffic_batch_id:'batch-2',traffic_deltas:[{username:'bob',uplink:10,downlink:0}]});
+  assert.equal(res.status,200);
+  const body=await res.json();
+  assert.equal(body.accepted_traffic_batch_id,'batch-2');
+  assert.ok(body.config);
+  assert.equal((await row('SELECT used_up_bytes FROM users WHERE id=2')).used_up_bytes,100);
+  assert.equal((await row('SELECT used_up_bytes FROM users WHERE id=3')).used_up_bytes,0);
+});
+test('an unrelated admin edit does not reload a node whose own config is unchanged', async () => {
+  const first=await (await sync()).json();
+  const acked=await (await sync({applied_config_hash:first.config_hash})).json();
+  assert.equal(acked.reload,false);
+  assert.equal((await request('/api/v1/users/3',{traffic_limit_bytes:123},1,'PUT')).status,200);
+  assert.equal((await request('/api/v1/templates',{name:'unused',protocol:'hysteria2'},1)).status,200);
+  const after=await (await sync({applied_config_hash:first.config_hash})).json();
+  assert.equal(after.reload,false);
+  assert.equal(after.config_hash,first.config_hash);
+  assert.equal((await request('/api/v1/users/2',{status:0},1,'PUT')).status,200);
+  const changed=await (await sync({applied_config_hash:first.config_hash})).json();
+  assert.equal(changed.reload,true);
+  assert.notEqual(changed.config_hash,first.config_hash);
+});
+test('owner reassignment with a stale traffic batch still delivers the new config', async () => {
+  assert.equal((await request('/api/v1/nodes/1',{owner_id:3},1,'PUT')).status,200);
+  const res=await sync({traffic_batch_id:'stale',traffic_deltas:[{username:'alice',uplink:5,downlink:5}]});
+  assert.equal(res.status,200);
+  const body=await res.json();
+  assert.equal(body.accepted_traffic_batch_id,'stale');
+  assert.equal(body.config.inbounds[0].users[0].name,'bob');
+});
+test('each tenant gets its own Reality key pair for server config and subscription', async () => {
+  await sql("INSERT INTO nodes(id,owner_id,name,server_ip,token) VALUES(2,3,'bob-node','192.0.2.2','node-2')");
+  await sql('INSERT INTO node_inbounds(node_id,template_id,listen_port) VALUES(2,1,2096)');
+  const alice=(await (await sync()).json()).config.inbounds[0].tls.reality.private_key;
+  const bob=(await (await sync({},'node-2')).json()).config.inbounds[0].tls.reality.private_key;
+  assert.ok(alice && bob);
+  assert.notEqual(alice,bob);
+  const keys=await row('SELECT reality_private_key priv, reality_public_key pub FROM users WHERE id=2');
+  assert.equal(keys.priv,alice);
+  const sub=await (await mf.dispatchFetch('https://test.local/sub/alice/sub-2?format=singbox')).json();
+  assert.equal(sub.outbounds.find(o=>o.type==='vless').tls.reality.public_key,keys.pub);
+  assert.equal((await (await sync()).json()).config.inbounds[0].tls.reality.private_key,alice);
+});
+test('template API never returns Reality key material', async () => {
+  for(const userId of [1,3]){
+    const list=await (await request('/api/v1/templates',undefined,userId,'GET')).json();
+    assert.ok(list.length>0);
+    for(const t of list){ assert.equal('reality_private_key' in t,false); assert.equal('reality_public_key' in t,false); }
+  }
+  const legacy=await (await request('/api/v1/template/generate-keys',undefined,1,'GET')).text();
+  assert.equal(legacy.includes('reality_private_key'),false);
 });
 test('inactive owner traffic is still settled and acknowledged', async () => {
   await sql('UPDATE users SET status=0 WHERE id=2');
@@ -131,4 +183,35 @@ test('parallel setup creates exactly one complete administrator without partial 
   assert.equal(results.filter(r=>r.status===200).length,1);
   assert.equal((await row("SELECT COUNT(*) n FROM users WHERE role='admin'")).n,1);
   assert.equal((await row('SELECT COUNT(*) n FROM inbound_templates')).n,2);
+});
+test('node deletion hides from list, frees name for immediate recreation, and rejects revival', async () => {
+  let res = await request('/api/v1/nodes/1', undefined, 2, 'DELETE');
+  assert.equal(res.status, 200);
+  const list = await (await request('/api/v1/nodes', undefined, 2, 'GET')).json();
+  assert.equal(list.length, 0);
+  // Re-creation with same name succeeds immediately
+  res = await request('/api/v1/nodes', { name: 'original', owner_id: 2, inbounds: [{ template_id: 1, listen_port: 2096 }] }, 2);
+  assert.equal(res.status, 200);
+  // Revived PUT is rejected
+  res = await request('/api/v1/nodes/1', { status: 'online' }, 2, 'PUT');
+  assert.equal(res.status, 404);
+});
+test('cascade deletion of tenant safely cleans up nodes, templates and slot constraints', async () => {
+  await sql("INSERT INTO nodes(id,owner_id,name,server_ip,token) VALUES(5,3,'bob-node','192.0.2.5','node-5')");
+  await sql('INSERT INTO node_inbounds(node_id,template_id,listen_port) VALUES(5,3,2096)');
+  const res = await request('/api/v1/users/3', undefined, 1, 'DELETE');
+  assert.equal(res.status, 200);
+  assert.equal(await row('SELECT id FROM users WHERE id=3'), null);
+  assert.equal(await row('SELECT id FROM nodes WHERE id=5'), null);
+  assert.equal(await row('SELECT id FROM inbound_templates WHERE id=3'), null);
+});
+test('user input validation enforces non-negative integer quotas and valid ISO dates', async () => {
+  let res = await request('/api/v1/users', { username: 'test-val', password: 'password-123', traffic_limit_bytes: -10 }, 1);
+  assert.equal(res.status, 400);
+  res = await request('/api/v1/users', { username: 'test-val', password: 'password-123', expire_at: 'invalid-date' }, 1);
+  assert.equal(res.status, 400);
+  res = await request('/api/v1/users/2', { traffic_limit_bytes: 'not-a-number' }, 1, 'PUT');
+  assert.equal(res.status, 400);
+  res = await request('/api/v1/users/2', { expire_at: 'not-a-date' }, 1, 'PUT');
+  assert.equal(res.status, 400);
 });

@@ -3,7 +3,6 @@ import { generateToken } from '../keys';
 import { buildEndpointsForUser, isUserActive, type NodeRecord } from '../protocol';
 import { buildSubscription, toUriString } from '../subscription';
 import { getInboundsForSubscription } from '../repo/inbounds';
-import { bumpConfigVersion } from '../lib/config-version';
 import { authMiddleware } from '../middleware/auth';
 import type { AppBindings, AppContext, AppVariables, JwtUser } from '../types';
 
@@ -90,7 +89,6 @@ subscriptionRoute.put('/api/v1/subscription', authMiddleware, async (c) => {
   if (body.reset_subscription) {
     const newToken = generateToken(32);
     await c.env.DB.prepare('UPDATE users SET sub_token = ? WHERE id = ?').bind(newToken, user.id).run();
-    await bumpConfigVersion(c.env.DB);
     return c.json({ success: true, sub_token: newToken });
   }
 
@@ -109,7 +107,6 @@ subscriptionRoute.put('/api/v1/subscription', authMiddleware, async (c) => {
     UPDATE users SET proxy_password = ?, status = ?, traffic_limit_bytes = ?, expire_at = ?, updated_at = datetime('now') WHERE id = ?
   `).bind(proxyPassword, status, trafficLimit, expireAt, user.id).run();
 
-  await bumpConfigVersion(c.env.DB);
   return c.json({ success: true });
 });
 

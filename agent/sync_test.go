@@ -13,6 +13,8 @@ import (
 
 func stateFixture(t *testing.T) (string, *StateStore) {
 	t.Helper()
+	stopSingBox()
+	t.Cleanup(stopSingBox)
 	dir := t.TempDir()
 	for _, part := range []string{"configs", "bin"} {
 		if err := os.MkdirAll(filepath.Join(dir, part), 0700); err != nil {

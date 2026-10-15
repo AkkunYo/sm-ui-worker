@@ -6,7 +6,7 @@ ARG VERSION=dev
 ARG COMMIT=none
 COPY go.mod go.sum* ./
 RUN go mod download
-COPY main.go state.go ./
+COPY *.go ./
 RUN CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH} go build \
     -ldflags="-s -w -X 'main.Version=${VERSION}' -X 'main.GitCommit=${COMMIT}'" \
     -o /bin/sm-node .

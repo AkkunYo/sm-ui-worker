@@ -1,7 +1,6 @@
 import { Hono } from 'hono';
 import { generateToken } from '../keys';
 import { getInboundsForSubscription } from '../repo/inbounds';
-import { bumpConfigVersion } from '../lib/config-version';
 import { validateTemplateBindings, type RequestedNodeSlot } from '../lib/template-access';
 import { authMiddleware } from '../middleware/auth';
 import type { AppBindings, AppVariables, JwtUser } from '../types';
@@ -56,7 +55,8 @@ nodesRoute.get('/api/v1/nodes', authMiddleware, async (c) => {
     const query = `
       SELECT n.*, u.username as owner_username
       FROM nodes n JOIN users u ON n.owner_id = u.id
-      ${ownerFilter ? 'WHERE n.owner_id = ?' : ''}
+      WHERE n.desired_state != 'revoked'
+      ${ownerFilter ? 'AND n.owner_id = ?' : ''}
       ORDER BY n.id ASC
     `;
     nodes = (await c.env.DB.prepare(query).bind(...(ownerFilter ? [Number.parseInt(ownerFilter, 10)] : [])).all<any>()).results;
@@ -64,7 +64,7 @@ nodesRoute.get('/api/v1/nodes', authMiddleware, async (c) => {
     nodes = (await c.env.DB.prepare(`
       SELECT n.*, u.username as owner_username
       FROM nodes n JOIN users u ON n.owner_id = u.id
-      WHERE n.owner_id = ? ORDER BY n.id ASC
+      WHERE n.owner_id = ? AND n.desired_state != 'revoked' ORDER BY n.id ASC
     `).bind(currentUser.userId).all<any>()).results;
   }
 
@@ -78,7 +78,7 @@ nodesRoute.get('/api/v1/nodes', authMiddleware, async (c) => {
       ...n,
       status: currentStatus,
       core_state: n.desired_state === 'active' && currentStatus === 'online' ? 'running' : 'stopped',
-      config_status: n.last_apply_error ? 'error' : (n.applied_config_version >= n.desired_config_version ? 'applied' : 'pending'),
+      config_status: n.last_apply_error ? 'error' : (n.desired_config_hash && n.applied_config_hash === n.desired_config_hash ? 'applied' : 'pending'),
       inbounds: allInbounds.filter(s => s.node_id === n.id),
       is_local: false
     };
@@ -127,7 +127,6 @@ nodesRoute.post('/api/v1/nodes', authMiddleware, async (c) => {
     await c.env.DB.prepare('DELETE FROM nodes WHERE id = ?').bind(nodeId).run();
     throw error;
   }
-  await bumpConfigVersion(c.env.DB);
 
   return c.json({ id: nodeId, name, token, server_ip: serverIp, proxy_port: proxyPort, hop_ports: hopPorts, protocol, status: 'offline', owner_id: ownerId });
 });
@@ -139,7 +138,7 @@ nodesRoute.put('/api/v1/nodes/:id', authMiddleware, async (c) => {
   const node = currentUser.role === 'admin'
     ? await c.env.DB.prepare('SELECT * FROM nodes WHERE id = ?').bind(id).first<any>()
     : await c.env.DB.prepare('SELECT * FROM nodes WHERE id = ? AND owner_id = ?').bind(id, currentUser.userId).first<any>();
-  if (!node) return c.json({ error: '主机不存在或无权限编辑' }, 404);
+  if (!node || node.desired_state === 'revoked') return c.json({ error: '主机不存在或无权限编辑' }, 404);
 
   const ownerId = currentUser.role === 'admin' && body.owner_id ? Number.parseInt(body.owner_id, 10) : node.owner_id;
   const name = typeof body.name === 'string' && body.name.trim() ? body.name.trim() : node.name;
@@ -165,14 +164,12 @@ nodesRoute.put('/api/v1/nodes/:id', authMiddleware, async (c) => {
   const statements: D1PreparedStatement[] = [c.env.DB.prepare(`
     UPDATE nodes SET owner_id = ?, name = ?, server_ip = ?, proxy_port = ?, hop_ports = ?, protocol = ?, status = ?,
       desired_state = ?, revoked_at = CASE WHEN ? = 'disabled' THEN COALESCE(revoked_at, datetime('now')) ELSE NULL END,
-      config_version = config_version + 1, desired_config_version = desired_config_version + 1,
       desired_config_hash = '', address_locked = CASE WHEN TRIM(?) <> '' THEN 1 ELSE address_locked END,
       updated_at = datetime('now') WHERE id = ?
   `).bind(ownerId, name, serverIp, proxyPort, hopPorts, protocol, status, desiredState, status, serverIp, id)];
   statements.push(c.env.DB.prepare('DELETE FROM node_inbounds WHERE node_id = ?').bind(id));
   statements.push(...insertSlotStatements(c.env.DB, id, validation.slots));
   await c.env.DB.batch(statements);
-  await bumpConfigVersion(c.env.DB);
   return c.json({ success: true });
 });
 
@@ -183,10 +180,9 @@ nodesRoute.delete('/api/v1/nodes/:id', authMiddleware, async (c) => {
   const binds = currentUser.role === 'admin' ? [id] : [id, currentUser.userId];
   const result = await c.env.DB.prepare(`
     UPDATE nodes SET status = 'disabled', desired_state = 'revoked', revoked_at = datetime('now'),
-      config_version = config_version + 1, desired_config_version = desired_config_version + 1,
-      desired_config_hash = '', updated_at = datetime('now') WHERE ${where}
+      name = name || '#revoked#' || hex(randomblob(4)),
+      desired_config_hash = '', updated_at = datetime('now') WHERE ${where} AND desired_state != 'revoked'
   `).bind(...binds).run();
   if (!result.meta.changes) return c.json({ error: '主机不存在或无权限删除' }, 404);
-  await bumpConfigVersion(c.env.DB);
   return c.json({ success: true });
 });

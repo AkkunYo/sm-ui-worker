@@ -20,6 +20,8 @@ CREATE TABLE IF NOT EXISTS users (
   used_up_bytes INTEGER DEFAULT 0,
   used_down_bytes INTEGER DEFAULT 0,
   expire_at TEXT,
+  reality_private_key TEXT NOT NULL DEFAULT '',
+  reality_public_key TEXT NOT NULL DEFAULT '',
   created_at TEXT DEFAULT (datetime('now')),
   updated_at TEXT DEFAULT (datetime('now'))
 );
@@ -43,7 +45,6 @@ CREATE TABLE IF NOT EXISTS nodes (
   used_down_bytes INTEGER DEFAULT 0,
   core_version TEXT DEFAULT 'v1.14.2',
   agent_version TEXT DEFAULT '',
-  config_version INTEGER DEFAULT 1,
   protocol_version INTEGER DEFAULT 2,
   desired_state TEXT NOT NULL DEFAULT 'active',
   revoked_at TEXT,
@@ -65,8 +66,6 @@ CREATE TABLE IF NOT EXISTS inbound_templates (
   protocol TEXT NOT NULL, -- 'vless' | 'hysteria2'
   reality_dest TEXT,
   reality_server_name TEXT,
-  reality_private_key TEXT,
-  reality_public_key TEXT,
   reality_short_id TEXT,
   hy2_up_mbps INTEGER DEFAULT 100,
   hy2_down_mbps INTEGER DEFAULT 100,
