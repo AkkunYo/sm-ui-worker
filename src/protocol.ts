@@ -5,8 +5,6 @@ export interface InboundTemplateRecord {
   protocol: 'vless' | 'hysteria2';
   reality_dest?: string | null;
   reality_server_name?: string | null;
-  reality_private_key?: string | null;
-  reality_public_key?: string | null;
   reality_short_id?: string | null;
   hy2_up_mbps?: number | null;
   hy2_down_mbps?: number | null;
@@ -19,6 +17,7 @@ export interface InboundTemplateRecord {
 export interface NodeInboundSlot {
   id?: number;
   node_id?: number;
+  owner_id?: number;
   template_id: number;
   listen_port: number;
   hop_ports?: string | null;

@@ -11,19 +11,20 @@
    - 存储：Cloudflare D1 (分布式边缘 SQLite)
    - 静态资源：Workers Static Assets 托管 Vue 3 仪表盘（SPA 路由降级）
 2. **主从通信 (方案 A: HTTP Pull Sync 轮询拉取)**：
-   - 各 VPS 节点运行轻量 Go 守护进程 (`agent/sm-node`)；
-   - 默认每 10 秒向 Master 发送 `POST /api/v2/node/sync`，上报状态、延迟、CPU、内存、Uptime 以及用户流量消耗增量；
-   - Master 在响应中附带全局配置版本号 `config_version`；
-   - 一旦在 Web 界面增删节点、更新用户或修改入站模板，`config_version` 自动递增；
-   - Node 发现版本落后，响应携带最新 Sing-box JSON 配置，Node 写入本地并向 `sing-box` 触发 `syscall.SIGHUP` 毫秒平滑热重载。
+   - 各 VPS 节点运行轻量 Go 守护进程 (`agent/sm-node v2.1.0`)；
+   - 默认每 30 秒向 Master 发送 `POST /api/v2/node/sync`，上报状态、延迟、CPU、内存、Uptime 以及用户流量消耗增量；
+   - **单节点配置 Hash 判定**：Master 按节点内容哈希 (`desired_config_hash`) 判定更新，彻底规避全局版本号递增引发的无关节点级联重载；
+   - **租户级 Reality 密钥隔离**：每个租户独立生成 X25519 密钥对，节点仅下发所属租户的私钥，从源头杜绝跨租户私钥外泄；
+   - **Agent 状态持久化与自愈回滚**：本地持久化 `agent-state.json`（待确认流量批次、期望状态、失败哈希与冷却机制），启动时执行真实健康检查，新配置启动失败毫秒级安全回滚上一份配置；
+   - **幂等流量收据**：流量批次按 `(node_id, batch_id)` 原子结算与确认，失效批次自动熔断出队，绝不阻断后续节点配置下发。
    - **优势**：无状态，规避 WebSocket 挂载时间限制，完全运行在 Cloudflare 免费版额度内，容错率极高。
-3. **同端口 443 双协议复用**：
-   - 边缘 VPS 节点单端口 443 同时分发 VLESS-Reality (TCP) 与 Hysteria 2 (UDP)。
+3. **多协议与端口跳跃支持**：
+   - 节点标准监听 2096/TCP (VLESS Reality) 与 2096/UDP (Hysteria 2)，支持 iptables 范围跳跃端口转发；
 4. **全客户端自适应通用订阅**：
-   - 访问 `/sub/:token`，走 Cloudflare 边缘缓存，自动嗅探 User-Agent，按客户端分发：
+   - 访问 `/sub/:username/:token` 或 `/sub/:token`，自动嗅探 User-Agent 或显式 `format=clash|singbox|base64`：
      - Mihomo / Clash: YAML 配置 (含分流规则与 url-test 自动选线)
-     - Sing-box 1.11+: 官方原生 JSON 配置
-     - 通用客户端: Base64 聚合链接
+     - Sing-box 1.14+: 官方原生 JSON 配置 (原生支持 Hysteria 2 `server_ports` 跳跃)
+     - 通用客户端: Base64 聚合链接 (兼容 NekoBox `mport` 规范)
    - 附带 `Subscription-Userinfo` 头部，客户端实时显示已用与总流量。
 
 ## 3. 代码库结构 (Codebase)
@@ -46,8 +47,8 @@
     - 入站模板提供 11 个推荐 SNI 预设弹窗（Amazon、Apple、Cloudflare 等），密钥与 Hy2 默认内置驱动；
     - 用户 ID 1 锁定为系统初始管理员，前后端双重拦截防误删；已用流量紧凑展示为 `0 B / 无限制`。
 - **`agent/` (VPS 节点端)**：
-  - `main.go`: Go 编写的单二进制节点客户端，实现 HTTP Pull、进程守护、SIGHUP 热重载、系统指标采集
-  - `Dockerfile`: 多架构 Docker 镜像构建，预装官方 `sing-box v1.11.4`
+  - `main.go` / `core.go` / `state.go`: Go 编写的单二进制节点客户端，实现 HTTP Pull、进程守护、健康检查、安全回滚、系统指标采集
+  - `Dockerfile`: 多架构 Docker 镜像构建，预装带 `with_v2ray_api` 标签的官方 `sing-box v1.14.2`
 - **`scripts/install.sh`**: 原生 Linux Systemd 一键安装脚本
 - **`.github/workflows/release.yml`**: GitHub Actions 流水线，编译多架构二进制并推送 `ghcr.io/akkunyo/sm-node`
 

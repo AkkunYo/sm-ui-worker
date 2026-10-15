@@ -6,6 +6,8 @@
   "type": "module",
   "scripts": {
     "dev": "wrangler dev",
+    "test": "node --test tests/worker.test.mjs && (cd agent && go test -race ./...)",
+    "typecheck": "tsc --noEmit",
     "build:web": "cd web && (test -d node_modules || npm install --no-audit --no-fund) && npm run build",
     "build": "node scripts/prepare-deploy.js && npm run build:web",
     "deploy": "npm run build && node scripts/validate-deploy-config.js && wrangler deploy --config .wrangler.generated.jsonc",

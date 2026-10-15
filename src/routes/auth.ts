@@ -48,19 +48,20 @@ authRoute.post('/api/v1/system/setup', async (c) => {
 
   try {
     // Create the complete initial state in one D1 batch. The setup lock is
-    // intentionally retained as a durable one-time marker.
+    // intentionally retained as a durable one-time marker. Reality keys
+    // belong to the tenant; the system template only carries handshake settings.
     const keys = generateRealityKeyPair();
     const shortId = generateToken(16);
     const results = await c.env.DB.batch([
       c.env.DB.prepare(`
-        INSERT INTO users (username, password_hash, role, uuid, proxy_password, sub_token, status)
-        VALUES (?, ?, 'admin', ?, ?, ?, 1)
-      `).bind(username, hashed, uuid, proxyPassword, subToken),
+        INSERT INTO users (username, password_hash, role, uuid, proxy_password, sub_token, status, reality_private_key, reality_public_key)
+        VALUES (?, ?, 'admin', ?, ?, ?, 1, ?, ?)
+      `).bind(username, hashed, uuid, proxyPassword, subToken, keys.privateKey, keys.publicKey),
       c.env.DB.prepare(`
         INSERT INTO inbound_templates (
-          owner_id, name, protocol, reality_dest, reality_server_name, reality_private_key, reality_public_key, reality_short_id, is_default
-        ) VALUES (NULL, '默认 VLESS Reality', 'vless', 'www.amazon.com:443', 'www.amazon.com', ?, ?, ?, 1)
-      `).bind(keys.privateKey, keys.publicKey, shortId),
+          owner_id, name, protocol, reality_dest, reality_server_name, reality_short_id, is_default
+        ) VALUES (NULL, '默认 VLESS Reality', 'vless', 'www.amazon.com:443', 'www.amazon.com', ?, 1)
+      `).bind(shortId),
       c.env.DB.prepare(`
         INSERT INTO inbound_templates (
           owner_id, name, protocol, hy2_up_mbps, hy2_down_mbps, hy2_masquerade, is_default

@@ -160,17 +160,8 @@
                   <span class="text-slate-300 font-bold">{{ tmpl.reality_short_id || '0123456789abcdef' }}</span>
                 </div>
                 <div class="flex items-center justify-between gap-2">
-                  <span class="text-slate-500 text-[10px] shrink-0">公钥 (Public Key):</span>
-                  <span class="text-slate-400 truncate text-[10px]" :title="tmpl.reality_public_key">{{ tmpl.reality_public_key || '系统自动派发' }}</span>
-                  <button
-                    v-if="tmpl.reality_public_key"
-                    type="button"
-                    @click="copyText(tmpl.reality_public_key)"
-                    class="text-slate-400 hover:text-emerald-400 transition shrink-0"
-                    title="复制公钥"
-                  >
-                    <Copy class="w-3.5 h-3.5" />
-                  </button>
+                  <span class="text-slate-500 text-[10px] shrink-0">密钥对:</span>
+                  <span class="text-slate-400 truncate text-[10px]">按租户自动分配</span>
                 </div>
               </div>
             </div>
@@ -301,24 +292,12 @@
 
               <!-- Keys block -->
               <div class="p-3.5 rounded-xl bg-slate-950/80 border border-slate-800 space-y-2 text-xs">
-                <div class="flex items-center justify-between">
-                  <span class="text-slate-400 font-semibold">X25519 密钥与 ShortID</span>
-                  <button
-                    type="button"
-                    @click="generateKeys"
-                    :disabled="generatingKeys"
-                    class="px-2 py-0.5 rounded text-[11px] font-medium bg-slate-800 hover:bg-slate-700 text-slate-300 transition"
-                  >
-                    {{ generatingKeys ? '生成中…' : '重新生成密钥对' }}
-                  </button>
-                </div>
+                <span class="text-slate-400 font-semibold">X25519 密钥与 ShortID</span>
                 <div class="space-y-1 font-mono text-[11px]">
                   <div class="truncate text-slate-400">
                     <span class="text-slate-500">ShortID:</span> {{ form.reality_short_id || '(保存时自动生成)' }}
                   </div>
-                  <div class="truncate text-slate-400">
-                    <span class="text-slate-500">公钥:</span> {{ form.reality_public_key || '(保存时自动生成)' }}
-                  </div>
+                  <p class="text-slate-500 font-sans">Reality 密钥按租户自动分配：每个租户独立一对，私钥只下发到该租户的主机。</p>
                 </div>
               </div>
             </div>
@@ -492,7 +471,7 @@
 
 <script setup>
 import { ref, computed, onMounted } from 'vue'
-import { Search, Globe, ShieldCheck, Zap, X, Plus, Trash2, Copy, Sliders } from 'lucide-vue-next'
+import { Search, Globe, ShieldCheck, Zap, X, Plus, Trash2, Sliders } from 'lucide-vue-next'
 import { request, getUser } from '../api'
 import PageSkeleton from '../components/PageSkeleton.vue'
 import { usePageRead } from '../composables/usePageRead'
@@ -506,7 +485,6 @@ const loading = ref(true)
 const loadError = ref('')
 const saving = ref(false)
 const saveError = ref('')
-const generatingKeys = ref(false)
 
 const activeFilter = ref('all')
 const filterTabs = [
@@ -526,8 +504,6 @@ const defaultForm = () => ({
   protocol: 'vless',
   reality_server_name: 'www.amazon.com',
   reality_dest: 'www.amazon.com:443',
-  reality_private_key: '',
-  reality_public_key: '',
   reality_short_id: '',
   hy2_up_mbps: 100,
   hy2_down_mbps: 100,
@@ -595,28 +571,11 @@ async function loadTemplates() {
   }
 }
 
-async function generateKeys() {
-  generatingKeys.value = true
-  try {
-    const res = await request('/api/v1/template/generate-keys')
-    if (res) {
-      form.value.reality_private_key = res.reality_private_key
-      form.value.reality_public_key = res.reality_public_key
-      form.value.reality_short_id = res.reality_short_id
-    }
-  } catch (err) {
-    saveError.value = '生成密钥失败: ' + err.message
-  } finally {
-    generatingKeys.value = false
-  }
-}
-
 function openCreateModal() {
   isEditing.value = false
   editingId.value = null
   form.value = defaultForm()
   saveError.value = ''
-  generateKeys()
   showModal.value = true
 }
 
@@ -628,8 +587,6 @@ function openEditModal(tmpl) {
     protocol: tmpl.protocol,
     reality_server_name: tmpl.reality_server_name || 'www.amazon.com',
     reality_dest: tmpl.reality_dest || 'www.amazon.com:443',
-    reality_private_key: tmpl.reality_private_key || '',
-    reality_public_key: tmpl.reality_public_key || '',
     reality_short_id: tmpl.reality_short_id || '',
     hy2_up_mbps: tmpl.hy2_up_mbps || 100,
     hy2_down_mbps: tmpl.hy2_down_mbps || 100,
@@ -655,8 +612,6 @@ async function saveTemplate() {
     if (form.value.protocol === 'vless') {
       payload.reality_server_name = form.value.reality_server_name.trim()
       payload.reality_dest = form.value.reality_dest.trim()
-      payload.reality_private_key = form.value.reality_private_key
-      payload.reality_public_key = form.value.reality_public_key
       payload.reality_short_id = form.value.reality_short_id
     } else if (form.value.protocol === 'hysteria2') {
       payload.hy2_up_mbps = form.value.hy2_up_mbps
@@ -704,12 +659,6 @@ function applyPresetAndClose(preset) {
   form.value.reality_server_name = preset.sni
   form.value.reality_dest = preset.dest
   showSniModal.value = false
-}
-
-function copyText(txt) {
-  if (navigator.clipboard) {
-    navigator.clipboard.writeText(txt)
-  }
 }
 
 onMounted(() => {

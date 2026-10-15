@@ -18,9 +18,10 @@
 
 **SM-UI Worker** 采用纯 Serverless 架构：
 1. **控制面 (Master)**：100% 运行于 **Cloudflare Workers** 边缘运行时，搭配 **Cloudflare D1** (分布式边缘 SQLite) 与 **Workers Static Assets** 托管 Vue 3 仪表盘。**主控完全免费，永不掉线，自带免费 SSL 与 DDoS 盾。**
-2. **通信协议 (方案 A: HTTP Pull)**：各 VPS 节点作为 Worker Node，每 10 秒向 Cloudflare Worker 发起一次轻量 HTTP 同步汇报负载（CPU/RAM/Uptime）。若管理后台下发了新配置，Node 原地拉取并热重载 sing-box。**无需 WebSocket 挂载，极致容错，完全跑在免费 Worker 额度内。**
-3. **单端口双协议复用 (Port 443 Multiplexing)**：Node 边缘节点使用端口 443 同时分发 **VLESS-Reality (TCP)** 与 **Hysteria 2 (UDP)**。
-4. **全客户端自适应订阅**：`/sub/:token` 走 Cloudflare Anycast 全球 CDN 边缘缓存，自动嗅探输出 Mihomo/Clash YAML、Sing-box JSON 及 Base64 URI。
+2. **通信协议 (方案 A: HTTP Pull)**：各 VPS 节点作为 Worker Node，默认每 30 秒向 Cloudflare Worker 发起一次轻量 HTTP 同步汇报负载（CPU/RAM/Uptime）。若管理后台下发了新配置，Node 原地拉取，先执行健康检查验证成功后热替换；若启动失败自动毫秒级回滚上一份已知正常配置。**无需 WebSocket 挂载，极致容错，完全跑在免费 Worker 额度内。**
+3. **单端口双协议与跳跃支持**：Node 边缘节点使用端口 2096 同时分发 **VLESS-Reality (TCP)** 与 **Hysteria 2 (UDP)**，支持端口跳跃。
+4. **全客户端自适应订阅**：`/sub/:username/:token` 或 `/sub/:token` 走 Cloudflare Anycast 全球 CDN 边缘缓存，自动嗅探或显式分发 Mihomo/Clash YAML、Sing-box JSON 及 Base64 URI。
+5. **租户级安全隔离**：每个租户独立拥有 X25519 密钥对，私钥仅下发给所属节点；流量收据幂等原子记账。
 
 ---
 

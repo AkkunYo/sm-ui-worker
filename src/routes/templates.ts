@@ -1,6 +1,5 @@
 import { Hono } from 'hono';
-import { generateRealityKeyPair, generateToken } from '../keys';
-import { bumpConfigVersion } from '../lib/config-version';
+import { generateToken } from '../keys';
 import { authMiddleware, adminOnly } from '../middleware/auth';
 import type { AppBindings, AppVariables, JwtUser } from '../types';
 
@@ -23,23 +22,15 @@ templatesRoute.get('/api/v1/templates', authMiddleware, async (c) => {
       WHERE t.owner_id IS NULL OR t.owner_id = ?
       ORDER BY t.owner_id ASC, t.protocol ASC, t.id ASC
     `).bind(currentUser.userId).all<any>()).results;
-
-    // Strip private keys for system templates or templates not owned by this tenant
-    templates = templates.map(t => {
-      if (t.owner_id === null || t.owner_id !== currentUser.userId) {
-        return { ...t, reality_private_key: '' };
-      }
-      return t;
-    });
   }
   return c.json(templates);
 });
 
 templatesRoute.post('/api/v1/templates', authMiddleware, async (c) => {
   const currentUser = c.get('user') as JwtUser;
-  const body = await c.req.json();
-  const name = (body.name || '').trim();
-  const protocol = (body.protocol || '').toLowerCase();
+  const body = await c.req.json().catch(() => ({}));
+  const name = typeof body?.name === 'string' ? body.name.trim() : '';
+  const protocol = typeof body?.protocol === 'string' ? body.protocol.toLowerCase().trim() : '';
 
   if (!name) return c.json({ error: '模板名称不能为空' }, 400);
   if (protocol !== 'vless' && protocol !== 'hysteria2') {
@@ -54,13 +45,7 @@ templatesRoute.post('/api/v1/templates', authMiddleware, async (c) => {
   const isDefault = (currentUser.role === 'admin' && body.is_default) ? 1 : 0;
   const realityDest = (body.reality_dest || 'www.amazon.com:443').trim();
   const realityServerName = (body.reality_server_name || 'www.amazon.com').trim();
-  const realityPrivateKey = (body.reality_private_key || '').trim();
-  const realityPublicKey = (body.reality_public_key || '').trim();
-  const realityShortId = (body.reality_short_id || '').trim();
-
-  if (protocol === 'vless' && (!realityPrivateKey || !realityPublicKey)) {
-    return c.json({ error: 'VLESS Reality 必须提供 Private Key 和 Public Key' }, 400);
-  }
+  const realityShortId = protocol === 'vless' ? ((body.reality_short_id || '').trim() || generateToken(16)) : '';
 
   const hy2UpMbps = parseInt(body.hy2_up_mbps, 10) || 100;
   const hy2DownMbps = parseInt(body.hy2_down_mbps, 10) || 100;
@@ -68,17 +53,14 @@ templatesRoute.post('/api/v1/templates', authMiddleware, async (c) => {
 
   const res = await c.env.DB.prepare(`
     INSERT INTO inbound_templates (
-      owner_id, name, protocol, reality_dest, reality_server_name,
-      reality_private_key, reality_public_key, reality_short_id,
+      owner_id, name, protocol, reality_dest, reality_server_name, reality_short_id,
       hy2_up_mbps, hy2_down_mbps, hy2_masquerade, is_default
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).bind(
-    ownerId, name, protocol, realityDest, realityServerName,
-    realityPrivateKey, realityPublicKey, realityShortId,
+    ownerId, name, protocol, realityDest, realityServerName, realityShortId,
     hy2UpMbps, hy2DownMbps, hy2Masquerade, isDefault
   ).run();
 
-  await bumpConfigVersion(c.env.DB);
   return c.json({ success: true, id: res.meta.last_row_id });
 });
 
@@ -98,8 +80,6 @@ templatesRoute.put('/api/v1/templates/:id', authMiddleware, async (c) => {
   const name = body.name ? body.name.trim() : tmpl.name;
   const realityDest = body.reality_dest !== undefined ? body.reality_dest.trim() : tmpl.reality_dest;
   const realityServerName = body.reality_server_name !== undefined ? body.reality_server_name.trim() : tmpl.reality_server_name;
-  const realityPrivateKey = body.reality_private_key !== undefined ? body.reality_private_key.trim() : tmpl.reality_private_key;
-  const realityPublicKey = body.reality_public_key !== undefined ? body.reality_public_key.trim() : tmpl.reality_public_key;
   const realityShortId = body.reality_short_id !== undefined ? body.reality_short_id.trim() : tmpl.reality_short_id;
   const hy2UpMbps = body.hy2_up_mbps !== undefined ? parseInt(body.hy2_up_mbps, 10) : tmpl.hy2_up_mbps;
   const hy2DownMbps = body.hy2_down_mbps !== undefined ? parseInt(body.hy2_down_mbps, 10) : tmpl.hy2_down_mbps;
@@ -108,19 +88,16 @@ templatesRoute.put('/api/v1/templates/:id', authMiddleware, async (c) => {
 
   await c.env.DB.prepare(`
     UPDATE inbound_templates SET
-      name = ?, reality_dest = ?, reality_server_name = ?,
-      reality_private_key = ?, reality_public_key = ?, reality_short_id = ?,
+      name = ?, reality_dest = ?, reality_server_name = ?, reality_short_id = ?,
       hy2_up_mbps = ?, hy2_down_mbps = ?, hy2_masquerade = ?, is_default = ?,
       updated_at = datetime('now')
     WHERE id = ?
   `).bind(
-    name, realityDest, realityServerName,
-    realityPrivateKey, realityPublicKey, realityShortId,
+    name, realityDest, realityServerName, realityShortId,
     hy2UpMbps, hy2DownMbps, hy2Masquerade, isDefault,
     id
   ).run();
 
-  await bumpConfigVersion(c.env.DB);
   return c.json({ success: true });
 });
 
@@ -143,16 +120,5 @@ templatesRoute.delete('/api/v1/templates/:id', authMiddleware, async (c) => {
   }
 
   await c.env.DB.prepare('DELETE FROM inbound_templates WHERE id = ?').bind(id).run();
-  await bumpConfigVersion(c.env.DB);
   return c.json({ success: true });
-});
-
-templatesRoute.get('/api/v1/template/generate-keys', authMiddleware, async (c) => {
-  const keys = generateRealityKeyPair();
-  const shortId = generateToken(16);
-  return c.json({
-    reality_private_key: keys.privateKey,
-    reality_public_key: keys.publicKey,
-    reality_short_id: shortId
-  });
 });

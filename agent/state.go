@@ -24,6 +24,10 @@ type AgentState struct {
 	AppliedConfigVersion int            `json:"applied_config_version"`
 	AppliedConfigHash    string         `json:"applied_config_hash"`
 	LastApplyError       string         `json:"last_apply_error,omitempty"`
+	// FailedConfigHash/FailedAt remember the last config that failed to apply
+	// so it is not retried (restarting the core) on every heartbeat.
+	FailedConfigHash string `json:"failed_config_hash,omitempty"`
+	FailedAt         int64  `json:"failed_at,omitempty"`
 }
 
 type StateStore struct {

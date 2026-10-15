@@ -84,14 +84,17 @@ var (
 	GitCommit = "none"
 	BuildTime = "unknown"
 
-	procMu      sync.Mutex
-	singBoxCmd  *exec.Cmd
 	cpuMu       sync.Mutex
 	lastTotalCP uint64
 	lastIdleCP  uint64
 )
 
-const protocolVersion = 2
+const (
+	protocolVersion = 2
+	// failedConfigRetryDelay keeps a config that failed to apply from being
+	// retried (and the core restarted) on every heartbeat.
+	failedConfigRetryDelay = 10 * time.Minute
+)
 
 func main() {
 	var cfg Config
@@ -186,7 +189,7 @@ func syncWithMaster(cfg Config, currentVer int, stateStore *StateStore) int {
 	}
 
 	procMu.Lock()
-	if state.DesiredState == "active" && singBoxCmd == nil {
+	if state.DesiredState == "active" && !coreRunningLocked() {
 		currentPath := filepath.Join(cfg.BaseDir, "configs", "current.json")
 		if _, err := os.Stat(currentPath); err == nil {
 			log.Printf("[Watchdog] sing-box core is stopped, attempting recovery restart...")
@@ -201,7 +204,7 @@ func syncWithMaster(cfg Config, currentVer int, stateStore *StateStore) int {
 		stopSingBox()
 		nodeStatus = "stopped"
 	} else {
-		if singBoxCmd == nil {
+		if !coreRunningLocked() {
 			nodeStatus = "offline"
 		}
 		procMu.Unlock()
@@ -304,10 +307,28 @@ func syncWithMaster(cfg Config, currentVer int, stateStore *StateStore) int {
 	}
 
 	if syncResp.Reload && len(syncResp.Config) > 0 {
+		// The master re-sends a config until it sees a clean acknowledgement.
+		// If exactly that config is already running, report it instead of
+		// restarting sing-box and dropping every connection.
+		if syncResp.ConfigHash != "" && syncResp.ConfigHash == state.AppliedConfigHash && coreRunning() {
+			if state.LastApplyError != "" {
+				_ = stateStore.Update(func(s *AgentState) error { s.LastApplyError = ""; return nil })
+			}
+			return currentVer
+		}
+		if syncResp.ConfigHash != "" && syncResp.ConfigHash == state.FailedConfigHash &&
+			time.Since(time.Unix(state.FailedAt, 0)) < failedConfigRetryDelay {
+			return currentVer
+		}
 		log.Printf("[Sync] New configuration received (version: %d, hash: %s). Applying...", syncResp.ConfigVersion, syncResp.ConfigHash)
 		if err := applyConfiguration(cfg.BaseDir, syncResp.Config, syncResp.ConfigHash); err != nil {
 			log.Printf("[Sync] Failed to apply configuration: %v", err)
-			_ = stateStore.Update(func(s *AgentState) error { s.LastApplyError = err.Error(); return nil })
+			_ = stateStore.Update(func(s *AgentState) error {
+				s.LastApplyError = err.Error()
+				s.FailedConfigHash = syncResp.ConfigHash
+				s.FailedAt = time.Now().Unix()
+				return nil
+			})
 			return currentVer
 		}
 		log.Printf("[Sync] Configuration v%d applied successfully!", syncResp.ConfigVersion)
@@ -315,6 +336,8 @@ func syncWithMaster(cfg Config, currentVer int, stateStore *StateStore) int {
 			s.AppliedConfigVersion = syncResp.ConfigVersion
 			s.AppliedConfigHash = syncResp.ConfigHash
 			s.LastApplyError = ""
+			s.FailedConfigHash = ""
+			s.FailedAt = 0
 			return nil
 		})
 		return syncResp.ConfigVersion
@@ -340,8 +363,6 @@ func newBatchID() (string, error) {
 func applyConfiguration(baseDir string, configBytes []byte, configHash string) error {
 	nextPath := filepath.Join(baseDir, "configs", "next.json")
 	currentPath := filepath.Join(baseDir, "configs", "current.json")
-	previousPath := filepath.Join(baseDir, "configs", "previous.json")
-	hashPath := filepath.Join(baseDir, "configs", "current.hash")
 	binPath := filepath.Join(baseDir, "bin", "sing-box")
 
 	if configHash != "" {
@@ -362,56 +383,18 @@ func applyConfiguration(baseDir string, configBytes []byte, configHash string) e
 		}
 	}
 
-	// Keep the last known-good configuration so a reload or process health
-	// failure never strands the node on an unverified file.
+	// Keep the last known-good configuration in memory so a failed start
+	// never strands the node on an unverified file.
 	previous, previousErr := os.ReadFile(currentPath)
-	if previousErr == nil {
-		if err := os.WriteFile(previousPath, previous, 0644); err != nil {
-			return err
-		}
+	if previousErr != nil {
+		previous = nil
 	}
 
 	// Atomic swap config
 	if err := os.Rename(nextPath, currentPath); err != nil {
 		return err
 	}
-
-	// Reload or Start
-	if err := reloadSingBox(baseDir, currentPath); err != nil {
-		if previousErr == nil {
-			_ = os.WriteFile(currentPath, previous, 0644)
-		} else {
-			_ = os.Remove(currentPath)
-		}
-		return err
-	}
-
-	// Persist active config hash only after sing-box has actually picked up the new config,
-	// so a failed reload is retried on the next heartbeat instead of being reported as applied.
-	if configHash != "" {
-		if err := writeFileAtomic(hashPath, []byte(configHash), 0644); err != nil {
-			log.Printf("[Sync] Failed to persist config hash: %v", err)
-		}
-	}
-	_ = os.Remove(previousPath)
-	return nil
-}
-
-func reloadSingBox(baseDir, currentPath string) error {
-	procMu.Lock()
-	defer procMu.Unlock()
-
-	if singBoxCmd != nil && singBoxCmd.Process != nil {
-		if err := singBoxCmd.Process.Signal(syscall.SIGHUP); err != nil {
-			_ = singBoxCmd.Process.Kill()
-			singBoxCmd = nil
-			return startSingBoxLocked(baseDir, currentPath)
-		}
-		log.Printf("Sent SIGHUP to sing-box (PID: %d)", singBoxCmd.Process.Pid)
-		return nil
-	}
-
-	return startSingBoxLocked(baseDir, currentPath)
+	return restartWithRollback(baseDir, currentPath, previous)
 }
 
 // writeFileAtomic writes to a temp file and renames it into place
@@ -421,57 +404,6 @@ func writeFileAtomic(path string, data []byte, perm os.FileMode) error {
 		return err
 	}
 	return os.Rename(tmpPath, path)
-}
-
-func startSingBox(baseDir, configPath string) error {
-	procMu.Lock()
-	defer procMu.Unlock()
-	return startSingBoxLocked(baseDir, configPath)
-}
-
-func startSingBoxLocked(baseDir, configPath string) error {
-	binPath := filepath.Join(baseDir, "bin", "sing-box")
-	if _, err := os.Stat(binPath); err != nil {
-		return fmt.Errorf("sing-box binary not found at %s", binPath)
-	}
-
-	cmd := exec.Command(binPath, "run", "-c", configPath)
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-
-	if err := cmd.Start(); err != nil {
-		return fmt.Errorf("failed to start sing-box: %w", err)
-	}
-	singBoxCmd = cmd
-	log.Printf("sing-box core started successfully (PID: %d)", cmd.Process.Pid)
-
-	go func() {
-		_ = cmd.Wait()
-		procMu.Lock()
-		if singBoxCmd == cmd {
-			singBoxCmd = nil
-		}
-		procMu.Unlock()
-		log.Printf("sing-box process exited.")
-	}()
-
-	// A process that exits immediately after Start is not a successful apply.
-	// Give sing-box a short health window before acknowledging the config.
-	time.Sleep(500 * time.Millisecond)
-	if err := cmd.Process.Signal(syscall.Signal(0)); err != nil {
-		return fmt.Errorf("sing-box exited during health check")
-	}
-
-	return nil
-}
-
-func stopSingBox() {
-	procMu.Lock()
-	defer procMu.Unlock()
-	if singBoxCmd != nil && singBoxCmd.Process != nil {
-		_ = singBoxCmd.Process.Kill()
-		singBoxCmd = nil
-	}
 }
 
 func ensureSingBoxBinary(baseDir string) error {
