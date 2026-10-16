@@ -1,10 +1,8 @@
 export interface InboundTemplateRecord {
   id: number;
-  owner_id?: number | null;
   name: string;
   protocol: 'vless' | 'hysteria2' | 'tuic' | 'trojan' | 'anytls';
-  listen_port?: number;
-  hop_ports?: string | null;
+  listen_port: number;
   reality_dest?: string | null;
   reality_server_name?: string | null;
   reality_short_id?: string | null;
@@ -24,7 +22,6 @@ export interface NodeInboundSlot {
   owner_id?: number;
   template_id: number;
   listen_port: number;
-  hop_ports?: string | null;
   enabled?: number;
   template_name?: string;
   protocol: 'vless' | 'hysteria2' | 'tuic' | 'trojan' | 'anytls';
@@ -105,9 +102,19 @@ export function buildServerConfig(
   const inboundTags: string[] = [];
 
   const enabledSlots = inboundSlots.filter(s => s.enabled === undefined || s.enabled === 1);
+  // Deduplicate server inbounds by protocol and listen_port to prevent duplicate binding errors
+  const serverSlots: NodeInboundSlot[] = [];
+  const seenProtocolPorts = new Set<string>();
+  for (const slot of enabledSlots) {
+    const key = `${slot.protocol}:${slot.listen_port}`;
+    if (!seenProtocolPorts.has(key)) {
+      seenProtocolPorts.add(key);
+      serverSlots.push({ ...slot });
+    }
+  }
 
-  for (let i = 0; i < enabledSlots.length; i++) {
-    const slot = enabledSlots[i];
+  for (let i = 0; i < serverSlots.length; i++) {
+    const slot = serverSlots[i];
     const tag = `${slot.protocol}-in-${slot.listen_port}-${i + 1}`;
     inboundTags.push(tag);
 
@@ -281,8 +288,6 @@ export interface ResolvedEndpoint {
   protocol: 'vless' | 'hysteria2' | 'tuic' | 'trojan' | 'anytls';
   server: string;
   port: number;
-  hopPorts?: string;
-  isHop?: boolean;
   certSha256?: string;
   // VLESS & Trojan Reality 字段
   uuid?: string;
@@ -301,7 +306,7 @@ export interface ResolvedEndpoint {
 
 /**
  * 统一解析并构建节点的标准端点集合
- * 收敛端口后缀命名规则、Hysteria2 SNI 规范化推导以及跳跃端口扩展
+ * 1 槽位 = 1 协议 = 1 端口 = 1 节点，彻底去除多端口跳跃分支
  */
 export function resolveNodeEndpoints(
   node: NodeRecord,
@@ -360,26 +365,6 @@ export function resolveNodeEndpoints(
         hy2ObfsPassword: slot.hy2_obfs_password || '',
         certSha256: node.cert_sha256 || ''
       });
-
-      // Hysteria 2 端口跳跃端点扩展
-      if (slot.hop_ports && slot.hop_ports.trim()) {
-        const hopPortRange = slot.hop_ports.trim();
-        const hopName = `${node.name}-Hy2-Hop${obfsTag}-${targetIP}${tenantSuffix}`;
-        endpoints.push({
-          name: hopName,
-          protocol: 'hysteria2',
-          server: targetIP,
-          port: slot.listen_port,
-          hopPorts: hopPortRange,
-          isHop: true,
-          password,
-          sni: hy2Sni,
-          upMbps,
-          downMbps,
-          hy2ObfsPassword: slot.hy2_obfs_password || '',
-          certSha256: node.cert_sha256 || ''
-        });
-      }
     } else if (slot.protocol === 'tuic') {
       const password = credentials.proxyPassword || 'sm-ui-password';
       const name = `${node.name}-TUIC-${targetIP}${portSuffix}${tenantSuffix}`;

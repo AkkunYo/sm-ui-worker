@@ -26,29 +26,27 @@ beforeEach(async () => {
   for (const table of ['traffic_receipts','node_inbounds','nodes','inbound_templates','users','system_settings','login_attempts']) await sql(`DELETE FROM ${table}`);
   await sql("INSERT INTO system_settings(key,value) VALUES('jwt_secret',?),('setup_completed','true')",secret);
   for (const [id, name, role] of [[1,'admin','admin'],[2,'alice','user'],[3,'bob','user']]) await sql("INSERT INTO users(id,username,password_hash,role,uuid,proxy_password,sub_token) VALUES(?,?, 'hash',?,?,?,?)",id,name,role,'uuid-'+id,'password-'+id,'sub-'+id);
-  for (const [id,owner] of [[1,null],[2,null],[3,3]]) await sql("INSERT INTO inbound_templates(id,owner_id,name,protocol) VALUES(?,?,?,'vless')",id,owner,'template-'+id);
+  for (const id of [1, 2, 3]) await sql("INSERT INTO inbound_templates(id,name,protocol,listen_port) VALUES(?,?,?,2096)", id, 'template-'+id, 'vless');
   await sql("UPDATE inbound_templates SET protocol='hysteria2' WHERE id=2");
   await sql("INSERT INTO nodes(id,owner_id,name,server_ip,token,status,desired_config_version) VALUES(1,2,'original','192.0.2.1','node-1','online',14)");
   await sql("INSERT INTO node_inbounds(id,node_id,template_id,enabled) VALUES(99,1,1,1)");
 });
 test('node creation keeps every slot attached to the new node, regardless of slot row IDs', async () => {
-  const res = await request('/api/v1/nodes',{name:'new', owner_id:2,inbounds:[{template_id:1},{template_id:2}]});
+  const res = await request('/api/v1/nodes',{name:'new', owner_id:2,template_ids:[1,2]});
   assert.equal(res.status,200,await res.clone().text());
   const node = await res.json();
   const slots = await db.prepare('SELECT node_id FROM node_inbounds WHERE node_id=?').bind(node.id).all();
   assert.equal(slots.results.length,2);
 });
-test('cross tenant bindings and reassignment without replacement are rejected atomically', async () => {
-  let res=await request('/api/v1/nodes/1',{name:'changed',inbounds:[{template_id:3}]},2,'PUT');
+test('non-existent template binding is rejected atomically', async () => {
+  let res=await request('/api/v1/nodes/1',{name:'changed',template_ids:[999]},2,'PUT');
   assert.equal(res.status,400);
   assert.equal((await row('SELECT name FROM nodes WHERE id=1')).name,'original');
-  await sql('UPDATE inbound_templates SET owner_id=2 WHERE id=1');
-  res=await request('/api/v1/nodes/1',{owner_id:3},1,'PUT');
+  res=await request('/api/v1/nodes/1',{owner_id:999},1,'PUT');
   assert.equal(res.status,400);
-  assert.equal((await row('SELECT owner_id FROM nodes WHERE id=1')).owner_id,2);
 });
 test('duplicate slots fail without changing node fields or losing existing slots', async () => {
-  const res=await request('/api/v1/nodes/1',{name:'changed',inbounds:[{template_id:1},{template_id:1}]},2,'PUT');
+  const res=await request('/api/v1/nodes/1',{name:'changed',template_ids:[1,1]},2,'PUT');
   assert.ok(res.status>=400);
   assert.equal((await row('SELECT name FROM nodes WHERE id=1')).name,'original');
   assert.equal((await row('SELECT COUNT(*) n FROM node_inbounds WHERE node_id=1')).n,1);
@@ -166,27 +164,33 @@ test('explicit format wins over User Agent and subscription credentials stay unc
   const outbound=config.outbounds.find(o=>o.type==='vless');
   assert.equal(outbound.server,'192.0.2.1'); assert.equal(outbound.uuid,'uuid-2');
 });
-test('sing-box subscription preserves hysteria2 port hopping',async()=>{
-  await sql("UPDATE inbound_templates SET hop_ports='22200-22300' WHERE id=2");
+test('sing-box subscription emits pure single-port hysteria2 outbound', async () => {
   await sql("INSERT INTO node_inbounds(node_id,template_id,enabled) VALUES(1,2,1)");
-  const res=await mf.dispatchFetch('https://test.local/sub/alice/sub-2?format=singbox');
-  assert.equal(res.status,200);
-  const config=await res.json();
-  const outbound=config.outbounds.find(o=>o.type==='hysteria2' && o.server_ports);
-  assert.deepEqual(outbound.server_ports,['22200:22300']);
-  assert.equal('server_port' in outbound,false);
+  const res = await mf.dispatchFetch('https://test.local/sub/alice/sub-2?format=singbox');
+  assert.equal(res.status, 200);
+  const config = await res.json();
+  const outbound = config.outbounds.find(o => o.type === 'hysteria2');
+  assert.ok(outbound);
+  assert.equal(outbound.server_port, 2096);
+  assert.equal('server_ports' in outbound, false);
 });
-test('base64 subscription emits NekoBox-compatible hysteria2 hopping URI',async()=>{
-  await sql("UPDATE inbound_templates SET hop_ports='22200-22300' WHERE id=2");
+test('base64 subscription emits pure single-port hysteria2 URI without mport', async () => {
   await sql("INSERT INTO node_inbounds(node_id,template_id,enabled) VALUES(1,2,1)");
-  const res=await mf.dispatchFetch('https://test.local/sub/alice/sub-2?format=base64');
-  assert.equal(res.status,200);
-  const uris=Buffer.from(await res.text(),'base64').toString('utf8').split('\n');
-  const hopUri=uris.find(uri=>uri.includes('Hy2-Hop-'));
-  assert.ok(hopUri);
-  assert.match(hopUri,/^hysteria2:\/\/[^@]+@192\.0\.2\.1:2096\?/);
-  assert.match(hopUri,/(?:\?|&)mport=22200-22300(?:&|$)/);
-  assert.doesNotMatch(hopUri,/@192\.0\.2\.1:22200-22300(?:\?|$)/);
+  const res = await mf.dispatchFetch('https://test.local/sub/alice/sub-2?format=base64');
+  assert.equal(res.status, 200);
+  const uris = Buffer.from(await res.text(), 'base64').toString('utf8');
+  assert.match(uris, /(?:^|\n)hysteria2:\/\/[^@]+@192\.0\.2\.1:2096\?/);
+  assert.doesNotMatch(uris, /mport=/);
+});
+test('template management is strictly adminOnly and tenants are rejected', async () => {
+  let res = await request('/api/v1/templates', { name: 'tenant-created', protocol: 'vless' }, 2);
+  assert.equal(res.status, 403);
+  res = await request('/api/v1/templates/1', { name: 'tenant-updated' }, 2, 'PUT');
+  assert.equal(res.status, 403);
+  res = await request('/api/v1/templates/1', undefined, 2, 'DELETE');
+  assert.equal(res.status, 403);
+  res = await request('/api/v1/templates', { name: 'admin-created', protocol: 'tuic', listen_port: 8443 }, 1);
+  assert.equal(res.status, 200);
 });
 test('admin preview edits selected tenant, tenants cannot raise own quotas',async()=>{
   const denied=await request('/api/v1/subscription',{traffic_limit_bytes:999},2,'PUT');
@@ -226,7 +230,7 @@ test('cascade deletion of tenant safely cleans up nodes, templates and slot cons
   assert.equal(res.status, 200);
   assert.equal(await row('SELECT id FROM users WHERE id=3'), null);
   assert.equal(await row('SELECT id FROM nodes WHERE id=5'), null);
-  assert.equal(await row('SELECT id FROM inbound_templates WHERE id=3'), null);
+  assert.ok(await row('SELECT id FROM inbound_templates WHERE id=3'));
 });
 test('user input validation enforces non-negative integer quotas and valid ISO dates', async () => {
   let res = await request('/api/v1/users', { username: 'test-val', password: 'password-123', traffic_limit_bytes: -10 }, 1);

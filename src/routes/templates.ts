@@ -1,7 +1,7 @@
 import { Hono } from 'hono';
 import { generateToken } from '../keys';
-import { authMiddleware } from '../middleware/auth';
-import type { AppBindings, AppVariables, JwtUser } from '../types';
+import { authMiddleware, adminOnly } from '../middleware/auth';
+import type { AppBindings, AppVariables } from '../types';
 
 export const templatesRoute = new Hono<{ Bindings: AppBindings; Variables: AppVariables }>();
 
@@ -18,29 +18,18 @@ function defaultPortForProtocol(protocol: AllowedProtocol): number {
   }
 }
 
+// All authenticated users can view the global master templates list
 templatesRoute.get('/api/v1/templates', authMiddleware, async (c) => {
-  const currentUser = c.get('user') as JwtUser;
-  let templates: any[] = [];
-  if (currentUser.role === 'admin') {
-    templates = (await c.env.DB.prepare(`
-      SELECT t.*, u.username as owner_username
-      FROM inbound_templates t
-      LEFT JOIN users u ON t.owner_id = u.id
-      ORDER BY t.owner_id ASC, t.protocol ASC, t.id ASC
-    `).all<any>()).results;
-  } else {
-    templates = (await c.env.DB.prepare(`
-      SELECT t.*
-      FROM inbound_templates t
-      WHERE t.owner_id IS NULL OR t.owner_id = ?
-      ORDER BY t.owner_id ASC, t.protocol ASC, t.id ASC
-    `).bind(currentUser.userId).all<any>()).results;
-  }
+  const templates = (await c.env.DB.prepare(`
+    SELECT t.*
+    FROM inbound_templates t
+    ORDER BY t.protocol ASC, t.id ASC
+  `).all<any>()).results;
   return c.json(templates);
 });
 
-templatesRoute.post('/api/v1/templates', authMiddleware, async (c) => {
-  const currentUser = c.get('user') as JwtUser;
+// Template mutations strictly restricted to administrator
+templatesRoute.post('/api/v1/templates', authMiddleware, adminOnly, async (c) => {
   const body = await c.req.json().catch(() => ({}));
   const name = typeof body?.name === 'string' ? body.name.trim() : '';
   const protocol = (typeof body?.protocol === 'string' ? body.protocol.toLowerCase().trim() : '') as AllowedProtocol;
@@ -54,13 +43,7 @@ templatesRoute.post('/api/v1/templates', authMiddleware, async (c) => {
   const listenPort = Number.isInteger(rawPort) && rawPort >= 1 && rawPort <= 65535
     ? rawPort : defaultPortForProtocol(protocol);
 
-  let ownerId: number | null = currentUser.userId;
-  if (currentUser.role === 'admin' && body.is_system === true) {
-    ownerId = null; // System-wide public template
-  }
-
-  const isDefault = (currentUser.role === 'admin' && body.is_default) ? 1 : 0;
-  const hopPorts = typeof body.hop_ports === 'string' ? body.hop_ports.trim() : '';
+  const isDefault = body.is_default ? 1 : 0;
   const realityDest = (body.reality_dest || 'www.amazon.com:443').trim();
   const realityServerName = (body.reality_server_name || 'www.amazon.com').trim();
   const realityShortId = (protocol === 'vless' || protocol === 'trojan')
@@ -85,13 +68,13 @@ templatesRoute.post('/api/v1/templates', authMiddleware, async (c) => {
 
   const res = await c.env.DB.prepare(`
     INSERT INTO inbound_templates (
-      owner_id, name, protocol, listen_port, hop_ports,
+      name, protocol, listen_port,
       reality_dest, reality_server_name, reality_short_id,
       hy2_up_mbps, hy2_down_mbps, hy2_masquerade, hy2_obfs_password, tuic_congestion_control,
       is_default
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).bind(
-    ownerId, name, protocol, listenPort, hopPorts,
+    name, protocol, listenPort,
     realityDest, realityServerName, realityShortId,
     hy2UpMbps, hy2DownMbps, hy2Masquerade, hy2ObfsPassword, tuicCongestion,
     isDefault
@@ -100,25 +83,18 @@ templatesRoute.post('/api/v1/templates', authMiddleware, async (c) => {
   return c.json({ success: true, id: res.meta.last_row_id });
 });
 
-templatesRoute.put('/api/v1/templates/:id', authMiddleware, async (c) => {
-  const currentUser = c.get('user') as JwtUser;
+templatesRoute.put('/api/v1/templates/:id', authMiddleware, adminOnly, async (c) => {
   const id = parseInt(c.req.param('id') || '0', 10);
   const body = await c.req.json().catch(() => ({}));
 
-  let tmpl: any = null;
-  if (currentUser.role === 'admin') {
-    tmpl = await c.env.DB.prepare('SELECT * FROM inbound_templates WHERE id = ?').bind(id).first<any>();
-  } else {
-    tmpl = await c.env.DB.prepare('SELECT * FROM inbound_templates WHERE id = ? AND owner_id = ?').bind(id, currentUser.userId).first<any>();
-  }
-  if (!tmpl) return c.json({ error: '模板不存在或无权限修改' }, 404);
+  const tmpl = await c.env.DB.prepare('SELECT * FROM inbound_templates WHERE id = ?').bind(id).first<any>();
+  if (!tmpl) return c.json({ error: '模板不存在' }, 404);
 
   const name = typeof body.name === 'string' && body.name.trim() ? body.name.trim() : tmpl.name;
   const rawPort = Number.parseInt(String(body.listen_port || ''), 10);
   const listenPort = Number.isInteger(rawPort) && rawPort >= 1 && rawPort <= 65535
     ? rawPort : tmpl.listen_port;
 
-  const hopPorts = body.hop_ports !== undefined ? String(body.hop_ports).trim() : (tmpl.hop_ports || '');
   const realityDest = body.reality_dest !== undefined ? body.reality_dest.trim() : tmpl.reality_dest;
   const realityServerName = body.reality_server_name !== undefined ? body.reality_server_name.trim() : tmpl.reality_server_name;
   const realityShortId = body.reality_short_id !== undefined ? body.reality_short_id.trim() : tmpl.reality_short_id;
@@ -140,17 +116,17 @@ templatesRoute.put('/api/v1/templates/:id', authMiddleware, async (c) => {
   const tuicCongestion = body.tuic_congestion_control !== undefined
     ? String(body.tuic_congestion_control).trim().toLowerCase() : (tmpl.tuic_congestion_control || 'bbr');
 
-  const isDefault = (currentUser.role === 'admin' && body.is_default !== undefined) ? (body.is_default ? 1 : 0) : tmpl.is_default;
+  const isDefault = body.is_default !== undefined ? (body.is_default ? 1 : 0) : tmpl.is_default;
 
   await c.env.DB.prepare(`
     UPDATE inbound_templates SET
-      name = ?, listen_port = ?, hop_ports = ?,
+      name = ?, listen_port = ?,
       reality_dest = ?, reality_server_name = ?, reality_short_id = ?,
       hy2_up_mbps = ?, hy2_down_mbps = ?, hy2_masquerade = ?, hy2_obfs_password = ?, tuic_congestion_control = ?,
       is_default = ?, updated_at = datetime('now')
     WHERE id = ?
   `).bind(
-    name, listenPort, hopPorts,
+    name, listenPort,
     realityDest, realityServerName, realityShortId,
     hy2UpMbps, hy2DownMbps, hy2Masquerade, hy2ObfsPassword, tuicCongestion,
     isDefault, id
@@ -159,19 +135,11 @@ templatesRoute.put('/api/v1/templates/:id', authMiddleware, async (c) => {
   return c.json({ success: true });
 });
 
-templatesRoute.delete('/api/v1/templates/:id', authMiddleware, async (c) => {
-  const currentUser = c.get('user') as JwtUser;
+templatesRoute.delete('/api/v1/templates/:id', authMiddleware, adminOnly, async (c) => {
   const id = parseInt(c.req.param('id') || '0', 10);
+  const tmpl = await c.env.DB.prepare('SELECT * FROM inbound_templates WHERE id = ?').bind(id).first<any>();
+  if (!tmpl) return c.json({ error: '模板不存在' }, 404);
 
-  let tmpl: any = null;
-  if (currentUser.role === 'admin') {
-    tmpl = await c.env.DB.prepare('SELECT * FROM inbound_templates WHERE id = ?').bind(id).first<any>();
-  } else {
-    tmpl = await c.env.DB.prepare('SELECT * FROM inbound_templates WHERE id = ? AND owner_id = ?').bind(id, currentUser.userId).first<any>();
-  }
-  if (!tmpl) return c.json({ error: '模板不存在或无权限删除' }, 404);
-
-  // Check if template is referenced in node_inbounds
   const inUse = await c.env.DB.prepare('SELECT COUNT(*) as count FROM node_inbounds WHERE template_id = ?').bind(id).first<{ count: number }>();
   if (inUse && inUse.count > 0) {
     return c.json({ error: `该模板当前正被 ${inUse.count} 个主机使用，不可直接删除` }, 400);
