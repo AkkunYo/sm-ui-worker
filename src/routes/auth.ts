@@ -60,13 +60,13 @@ authRoute.post('/api/v1/system/setup', async (c) => {
       `).bind(username, hashed, uuid, proxyPassword, subToken, keys.privateKey, keys.publicKey),
       c.env.DB.prepare(`
         INSERT INTO inbound_templates (
-          owner_id, name, protocol, reality_dest, reality_server_name, reality_short_id, is_default
-        ) VALUES (NULL, '默认 VLESS Reality', 'vless', 'www.amazon.com:443', 'www.amazon.com', ?, 1)
+          name, protocol, listen_port, reality_dest, reality_server_name, reality_short_id, is_default
+        ) VALUES ('默认 VLESS Reality', 'vless', 2096, 'www.amazon.com:443', 'www.amazon.com', ?, 1)
       `).bind(shortId),
       c.env.DB.prepare(`
         INSERT INTO inbound_templates (
-          owner_id, name, protocol, hy2_up_mbps, hy2_down_mbps, hy2_masquerade, is_default
-        ) VALUES (NULL, '默认 Hysteria 2', 'hysteria2', 100, 100, 'https://bing.com', 1)
+          name, protocol, listen_port, hy2_up_mbps, hy2_down_mbps, hy2_masquerade, is_default
+        ) VALUES ('默认 Hysteria 2', 'hysteria2', 2096, 100, 100, 'https://bing.com', 1)
       `),
       c.env.DB.prepare("INSERT OR REPLACE INTO system_settings (key, value) VALUES ('setup_completed', 'true')"),
       c.env.DB.prepare("UPDATE system_settings SET value = 'completed', updated_at = datetime('now') WHERE key = 'setup_lock'")

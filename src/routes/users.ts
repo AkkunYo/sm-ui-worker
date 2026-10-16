@@ -127,8 +127,6 @@ usersRoute.delete('/api/v1/users/:id', authMiddleware, adminOnly, async (c) => {
     c.env.DB.prepare('DELETE FROM node_inbounds WHERE node_id IN (SELECT id FROM nodes WHERE owner_id = ?)').bind(id),
     c.env.DB.prepare('DELETE FROM traffic_receipts WHERE node_id IN (SELECT id FROM nodes WHERE owner_id = ?)').bind(id),
     c.env.DB.prepare('DELETE FROM nodes WHERE owner_id = ?').bind(id),
-    c.env.DB.prepare('DELETE FROM node_inbounds WHERE template_id IN (SELECT id FROM inbound_templates WHERE owner_id = ?)').bind(id),
-    c.env.DB.prepare('DELETE FROM inbound_templates WHERE owner_id = ?').bind(id),
     c.env.DB.prepare('DELETE FROM users WHERE id = ?').bind(id)
   ]);
   return c.json({ success: true });

@@ -1,16 +1,17 @@
 <template>
-  <div class="p-4 sm:p-8 space-y-8 max-w-6xl mx-auto">
+  <div class="p-4 sm:p-8 space-y-6 max-w-6xl mx-auto">
     <!-- Header -->
     <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
       <div>
         <h1 class="text-2xl font-bold tracking-tight text-white flex items-center gap-2.5">
-          <span>协议模板池 (Inbound Templates)</span>
+          <span>协议主模板池 (Master Templates)</span>
         </h1>
         <p class="text-sm text-slate-400 mt-1">
-          三层解耦架构：协议模板池集中定义端口与协议参数，各主机按插槽自由挂载，子节点自动遵从主模板规则。
+          单端口纯净架构：端口与协议参数由管理员在主模板统一管控，各主机仅有勾选挂载权，子节点无条件遵从规则。
         </p>
       </div>
       <button
+        v-if="isAdmin"
         @click="openCreateModal"
         class="px-4 py-2.5 rounded-xl bg-emerald-500 hover:bg-emerald-600 text-slate-950 font-semibold text-sm transition flex items-center justify-center space-x-2 shadow-lg shadow-emerald-500/20 self-start sm:self-auto shrink-0"
       >
@@ -29,31 +30,12 @@
     <PageSkeleton v-if="loading" label="正在读取协议模板池…" />
 
     <!-- Templates Content -->
-    <div v-else class="space-y-6">
-      <!-- Filter Tabs -->
-      <div class="flex flex-wrap items-center justify-between gap-3 bg-slate-900/80 border border-slate-800 p-2 rounded-2xl">
-        <div class="flex items-center space-x-1.5 overflow-x-auto">
-          <button
-            v-for="tab in filterTabs"
-            :key="tab.id"
-            @click="activeFilter = tab.id"
-            class="px-3.5 py-1.5 rounded-xl text-xs font-semibold transition whitespace-nowrap"
-            :class="activeFilter === tab.id
-              ? 'bg-emerald-500/15 text-emerald-400 border border-emerald-500/30'
-              : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/60'"
-          >
-            {{ tab.label }} ({{ getFilteredCount(tab.id) }})
-          </button>
-        </div>
-        <div class="text-xs text-slate-500 hidden sm:block pr-2">
-          共 {{ templates.length }} 个模板可用
-        </div>
-      </div>
-
+    <div v-else class="space-y-4">
       <!-- Empty State -->
-      <div v-if="filteredTemplates.length === 0" class="p-12 text-center rounded-3xl bg-slate-900 border border-slate-800 text-slate-500 space-y-3">
-        <p class="text-sm">没有匹配的协议模板</p>
+      <div v-if="templates.length === 0" class="p-12 text-center rounded-3xl bg-slate-900 border border-slate-800 text-slate-500 space-y-3">
+        <p class="text-sm">暂无可用协议模板</p>
         <button
+          v-if="isAdmin"
           @click="openCreateModal"
           class="px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-medium transition inline-flex items-center space-x-1.5"
         >
@@ -70,15 +52,14 @@
               <tr>
                 <th class="px-5 py-3.5 font-semibold">模板名称</th>
                 <th class="px-4 py-3.5 font-semibold">协议类型</th>
-                <th class="px-4 py-3.5 font-semibold">服务端口</th>
+                <th class="px-4 py-3.5 font-semibold">监听端口</th>
                 <th class="px-5 py-3.5 font-semibold">伪装 / 核心参数</th>
                 <th class="px-4 py-3.5 font-semibold">混淆状态</th>
-                <th class="px-4 py-3.5 font-semibold">归属范围</th>
                 <th class="px-4 py-3.5 font-semibold text-right">操作</th>
               </tr>
             </thead>
             <tbody class="divide-y divide-slate-800">
-              <tr v-for="tmpl in filteredTemplates" :key="tmpl.id" class="hover:bg-slate-800/30 transition">
+              <tr v-for="tmpl in templates" :key="tmpl.id" class="hover:bg-slate-800/30 transition">
                 <!-- 1. Name & Badges -->
                 <td class="px-5 py-3.5">
                   <div class="flex items-center space-x-2">
@@ -106,20 +87,11 @@
                   </span>
                 </td>
 
-                <!-- 3. Ports -->
+                <!-- 3. Port (Pure Single Port) -->
                 <td class="px-4 py-3.5 font-mono text-xs">
-                  <div class="flex flex-wrap items-center gap-1.5">
-                    <span class="px-2 py-0.5 rounded bg-slate-800 text-slate-200 border border-slate-700 font-semibold">
-                      :{{ tmpl.listen_port || 2096 }}
-                    </span>
-                    <span
-                      v-if="tmpl.hop_ports"
-                      class="px-1.5 py-0.5 rounded text-[10px] bg-sky-500/10 text-sky-300 border border-sky-500/20"
-                      title="端口跳跃范围"
-                    >
-                      ⇄ {{ tmpl.hop_ports }}
-                    </span>
-                  </div>
+                  <span class="px-2 py-0.5 rounded bg-slate-800 text-slate-200 border border-slate-700 font-semibold">
+                    :{{ tmpl.listen_port || 2096 }}
+                  </span>
                 </td>
 
                 <!-- 4. Parameters -->
@@ -134,7 +106,7 @@
                   </div>
                   <div v-else-if="tmpl.protocol === 'hysteria2'" class="space-y-0.5">
                     <div class="text-slate-300">
-                      上下行: <span class="text-sky-300 font-semibold">{{ tmpl.hy2_up_mbps || 100 }}M</span> / <span class="text-sky-300 font-semibold">{{ tmpl.hy2_down_mbps || 100 }}M</span>
+                      速率: <span class="text-sky-300 font-semibold">{{ tmpl.hy2_up_mbps || 100 }}M</span> / <span class="text-sky-300 font-semibold">{{ tmpl.hy2_down_mbps || 100 }}M</span>
                     </div>
                     <div class="text-slate-500 text-[11px] truncate max-w-xs" :title="tmpl.hy2_masquerade">
                       {{ tmpl.hy2_masquerade || 'https://bing.com' }}
@@ -164,27 +136,10 @@
                   <span v-else class="text-slate-600 text-xs">—</span>
                 </td>
 
-                <!-- 6. Scope -->
-                <td class="px-4 py-3.5 text-xs">
-                  <span
-                    v-if="tmpl.owner_id === null"
-                    class="px-2 py-0.5 rounded text-[11px] font-medium bg-violet-500/10 text-violet-300 border border-violet-500/20"
-                  >
-                    🌐 系统公共
-                  </span>
-                  <span
-                    v-else
-                    class="px-2 py-0.5 rounded text-[11px] font-medium bg-amber-500/10 text-amber-300 border border-amber-500/20"
-                  >
-                    🔒 {{ tmpl.owner_username || '租户私有' }}
-                  </span>
-                </td>
-
-                <!-- 7. Actions -->
+                <!-- 6. Actions -->
                 <td class="px-4 py-3.5 text-right">
-                  <div class="flex items-center justify-end space-x-1">
+                  <div v-if="isAdmin" class="flex items-center justify-end space-x-1">
                     <button
-                      v-if="canEdit(tmpl)"
                       @click="openEditModal(tmpl)"
                       class="p-1.5 text-slate-400 hover:text-emerald-400 hover:bg-emerald-500/10 rounded-lg transition"
                       title="编辑模板"
@@ -192,15 +147,14 @@
                       <Sliders class="w-4 h-4" />
                     </button>
                     <button
-                      v-if="canEdit(tmpl)"
                       @click="deleteTemplate(tmpl)"
                       class="p-1.5 text-slate-400 hover:text-rose-400 hover:bg-rose-500/10 rounded-lg transition"
                       title="删除模板"
                     >
                       <Trash2 class="w-4 h-4" />
                     </button>
-                    <span v-else class="text-[11px] text-slate-600 px-2">只读</span>
                   </div>
+                  <span v-else class="text-[11px] text-slate-500 px-2">只读</span>
                 </td>
               </tr>
             </tbody>
@@ -209,7 +163,7 @@
       </div>
     </div>
 
-    <!-- Create / Edit Template Modal -->
+    <!-- Create / Edit Template Modal (Admin Only) -->
     <Teleport to="body">
       <div
         v-if="showModal"
@@ -223,7 +177,7 @@
                 <span>{{ isEditing ? '编辑协议模板' : '新建协议模板' }}</span>
               </h2>
               <p class="text-xs text-slate-400 mt-0.5">
-                {{ isEditing ? '更新主模板规则，所有绑定该模板的主机自动生效并遵从' : '创建协议模板，定义监听端口与协议参数' }}
+                {{ isEditing ? '修改主模板参数，所有挂载该模板的主机自动遵从规则' : '定义主模板端口与协议参数' }}
               </p>
             </div>
             <button @click="showModal = false" class="text-slate-400 hover:text-white">
@@ -243,7 +197,7 @@
                   type="text"
                   required
                   class="w-full px-4 py-2.5 rounded-xl bg-slate-950 border border-slate-800 text-slate-100 text-sm focus:border-emerald-500 focus:outline-none"
-                  placeholder="例如: 极速 VLESS / Hy2-跳跃"
+                  placeholder="例如: 默认 Hysteria 2"
                 />
               </div>
 
@@ -266,36 +220,21 @@
               </div>
             </div>
 
-            <!-- Port Configuration -->
-            <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
-              <div>
-                <label class="block text-xs font-semibold text-slate-300 mb-1.5">
-                  服务监听端口 (Port) <span class="text-rose-400">*</span>
-                </label>
-                <input
-                  v-model.number="form.listen_port"
-                  type="number"
-                  min="1"
-                  max="65535"
-                  required
-                  class="w-full px-4 py-2.5 rounded-xl bg-slate-950 border border-slate-800 text-slate-100 font-mono text-sm focus:border-emerald-500 focus:outline-none"
-                  placeholder="2096"
-                />
-                <p class="text-[11px] text-slate-500 mt-1">主模板端口，所有子主机默认遵从</p>
-              </div>
-
-              <div v-if="form.protocol === 'hysteria2'">
-                <label class="block text-xs font-semibold text-slate-300 mb-1.5">
-                  端口跳跃范围 (可选)
-                </label>
-                <input
-                  v-model="form.hop_ports"
-                  type="text"
-                  class="w-full px-4 py-2.5 rounded-xl bg-slate-950 border border-slate-800 text-slate-100 font-mono text-sm focus:border-sky-500 focus:outline-none"
-                  placeholder="例如: 22200-22300"
-                />
-                <p class="text-[11px] text-slate-500 mt-1">不填则仅单端口；填写则同时生成单口与多口线路</p>
-              </div>
+            <!-- Single Port Configuration -->
+            <div>
+              <label class="block text-xs font-semibold text-slate-300 mb-1.5">
+                服务监听端口 (Port) <span class="text-rose-400">*</span>
+              </label>
+              <input
+                v-model.number="form.listen_port"
+                type="number"
+                min="1"
+                max="65535"
+                required
+                class="w-full px-4 py-2.5 rounded-xl bg-slate-950 border border-slate-800 text-slate-100 font-mono text-sm focus:border-emerald-500 focus:outline-none"
+                placeholder="2096"
+              />
+              <p class="text-[11px] text-slate-500 mt-1">主模板固定监听端口，所有子节点统一遵从，无需单独配置</p>
             </div>
 
             <!-- 2. VLESS & Trojan REALITY Fields -->
@@ -379,7 +318,7 @@
                       复制密码
                     </button>
                   </div>
-                  <p class="text-[10px] text-slate-500 font-sans">系统自动派发 16 字节密钥，客户端订阅将自动注入，无需手动修改。</p>
+                  <p class="text-[10px] text-slate-500 font-sans">系统自动派发 16 字节密钥，客户端订阅自动注入，无需手动配置。</p>
                 </div>
               </div>
 
@@ -454,12 +393,7 @@
             <div class="pt-2 border-t border-slate-800 space-y-2">
               <label class="flex items-center space-x-2 text-xs text-slate-300 cursor-pointer">
                 <input type="checkbox" v-model="form.is_default" class="rounded bg-slate-950 border-slate-800 text-emerald-500 focus:ring-0 w-4 h-4" />
-                <span>设为该协议的默认模板 (新建主机时自动挂载)</span>
-              </label>
-
-              <label v-if="isAdmin && !isEditing" class="flex items-center space-x-2 text-xs text-violet-300 cursor-pointer">
-                <input type="checkbox" v-model="form.is_system" class="rounded bg-slate-950 border-slate-800 text-violet-500 focus:ring-0 w-4 h-4" />
-                <span>设为系统公共模板 (全局可用，所有租户均可使用)</span>
+                <span>设为默认模板 (新建主机时自动挂载)</span>
               </label>
             </div>
 
@@ -588,18 +522,6 @@ const loadError = ref('')
 const saving = ref(false)
 const saveError = ref('')
 
-const activeFilter = ref('all')
-const filterTabs = [
-  { id: 'all', label: '全部' },
-  { id: 'vless', label: 'VLESS' },
-  { id: 'hysteria2', label: 'Hysteria 2' },
-  { id: 'tuic', label: 'TUIC v5' },
-  { id: 'trojan', label: 'Trojan' },
-  { id: 'anytls', label: 'AnyTLS' },
-  { id: 'system', label: '系统公共' },
-  { id: 'private', label: '租户私有' }
-]
-
 const showModal = ref(false)
 const isEditing = ref(false)
 const editingId = ref(null)
@@ -619,7 +541,6 @@ const defaultForm = () => ({
   name: '',
   protocol: 'vless',
   listen_port: 2096,
-  hop_ports: '',
   reality_server_name: 'www.amazon.com',
   reality_dest: 'www.amazon.com:443',
   reality_short_id: '',
@@ -629,8 +550,7 @@ const defaultForm = () => ({
   hy2_obfs_enabled: false,
   hy2_obfs_password: '',
   tuic_congestion_control: 'bbr',
-  is_default: false,
-  is_system: false
+  is_default: false
 })
 
 const form = ref(defaultForm())
@@ -670,28 +590,6 @@ const filteredPresets = computed(() => {
   return presets.filter(p => p.sni.toLowerCase().includes(q) || p.label.toLowerCase().includes(q) || p.desc.toLowerCase().includes(q))
 })
 
-const filteredTemplates = computed(() => {
-  if (activeFilter.value === 'vless') return templates.value.filter(t => t.protocol === 'vless')
-  if (activeFilter.value === 'hysteria2') return templates.value.filter(t => t.protocol === 'hysteria2')
-  if (activeFilter.value === 'tuic') return templates.value.filter(t => t.protocol === 'tuic')
-  if (activeFilter.value === 'trojan') return templates.value.filter(t => t.protocol === 'trojan')
-  if (activeFilter.value === 'anytls') return templates.value.filter(t => t.protocol === 'anytls')
-  if (activeFilter.value === 'system') return templates.value.filter(t => t.owner_id === null)
-  if (activeFilter.value === 'private') return templates.value.filter(t => t.owner_id !== null)
-  return templates.value
-})
-
-function getFilteredCount(tabId) {
-  if (tabId === 'vless') return templates.value.filter(t => t.protocol === 'vless').length
-  if (tabId === 'hysteria2') return templates.value.filter(t => t.protocol === 'hysteria2').length
-  if (tabId === 'tuic') return templates.value.filter(t => t.protocol === 'tuic').length
-  if (tabId === 'trojan') return templates.value.filter(t => t.protocol === 'trojan').length
-  if (tabId === 'anytls') return templates.value.filter(t => t.protocol === 'anytls').length
-  if (tabId === 'system') return templates.value.filter(t => t.owner_id === null).length
-  if (tabId === 'private') return templates.value.filter(t => t.owner_id !== null).length
-  return templates.value.length
-}
-
 function getProtoBadge(proto) {
   switch (proto) {
     case 'vless': return { label: 'VLESS Reality', class: 'bg-emerald-500/15 text-emerald-300 border-emerald-500/30', dot: 'bg-emerald-400' }
@@ -701,11 +599,6 @@ function getProtoBadge(proto) {
     case 'anytls': return { label: 'AnyTLS', class: 'bg-rose-500/15 text-rose-300 border-rose-500/30', dot: 'bg-rose-400' }
     default: return { label: proto, class: 'bg-slate-500/15 text-slate-300 border-slate-500/30', dot: 'bg-slate-400' }
   }
-}
-
-function canEdit(tmpl) {
-  if (tmpl.owner_id === null) return isAdmin.value
-  return isAdmin.value || tmpl.owner_id === currentUser?.id
 }
 
 async function loadTemplates() {
@@ -736,7 +629,6 @@ function openEditModal(tmpl) {
     name: tmpl.name,
     protocol: tmpl.protocol,
     listen_port: tmpl.listen_port || defaultPort(tmpl.protocol),
-    hop_ports: tmpl.hop_ports || '',
     reality_server_name: tmpl.reality_server_name || 'www.amazon.com',
     reality_dest: tmpl.reality_dest || 'www.amazon.com:443',
     reality_short_id: tmpl.reality_short_id || '',
@@ -746,8 +638,7 @@ function openEditModal(tmpl) {
     hy2_obfs_enabled: !!tmpl.hy2_obfs_password,
     hy2_obfs_password: tmpl.hy2_obfs_password || '',
     tuic_congestion_control: tmpl.tuic_congestion_control || 'bbr',
-    is_default: !!tmpl.is_default,
-    is_system: tmpl.owner_id === null
+    is_default: !!tmpl.is_default
   }
   saveError.value = ''
   showModal.value = true
@@ -761,8 +652,7 @@ async function saveTemplate() {
       name: form.value.name.trim(),
       protocol: form.value.protocol,
       listen_port: form.value.listen_port,
-      is_default: form.value.is_default ? 1 : 0,
-      is_system: form.value.is_system
+      is_default: form.value.is_default ? 1 : 0
     }
 
     if (form.value.protocol === 'vless' || form.value.protocol === 'trojan') {
@@ -770,7 +660,6 @@ async function saveTemplate() {
       payload.reality_dest = form.value.reality_dest.trim()
       payload.reality_short_id = form.value.reality_short_id
     } else if (form.value.protocol === 'hysteria2') {
-      payload.hop_ports = form.value.hop_ports.trim()
       payload.hy2_up_mbps = form.value.hy2_up_mbps
       payload.hy2_down_mbps = form.value.hy2_down_mbps
       payload.hy2_masquerade = form.value.hy2_masquerade.trim()

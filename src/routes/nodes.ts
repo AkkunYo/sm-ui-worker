@@ -91,22 +91,30 @@ nodesRoute.post('/api/v1/nodes', authMiddleware, async (c) => {
 
   const ownerId = currentUser.role === 'admin' && body.owner_id ? Number.parseInt(body.owner_id, 10) : currentUser.userId;
   if (!Number.isInteger(ownerId) || ownerId <= 0) return c.json({ error: '所属租户无效' }, 400);
+  const ownerUser = await c.env.DB.prepare('SELECT id FROM users WHERE id = ?').bind(ownerId).first();
+  if (!ownerUser) return c.json({ error: '所属租户不存在' }, 400);
   const serverIp = typeof body.server_ip === 'string' ? body.server_ip.trim() : '';
   const token = generateToken(32);
 
   let slots: RequestedNodeSlot[];
-  if (Array.isArray(body.inbounds)) {
+  if (Array.isArray(body.template_ids)) {
+    const rawIds = body.template_ids;
+    if (new Set(rawIds).size !== rawIds.length) {
+      return c.json({ error: '不能重复绑定相同的协议模板' }, 400);
+    }
+    slots = rawIds.filter((tid: any) => Number.isInteger(tid) && tid > 0).map((tid: number) => ({ template_id: tid, enabled: 1 }));
+  } else if (Array.isArray(body.inbounds)) {
     const normalized = normalizeSlots(body.inbounds);
     if (!normalized) return c.json({ error: '节点插槽参数无效' }, 400);
     slots = normalized;
   } else {
-    const defaults = (await c.env.DB.prepare(`SELECT id FROM inbound_templates WHERE owner_id IS NULL AND is_default = 1 ORDER BY id ASC`).all<{ id: number }>()).results;
+    const defaults = (await c.env.DB.prepare(`SELECT id FROM inbound_templates WHERE is_default = 1 ORDER BY id ASC`).all<{ id: number }>()).results;
     slots = defaults.map(template => ({
       template_id: template.id,
       enabled: 1
     }));
   }
-  const validation = await validateTemplateBindings(c.env.DB, ownerId, slots);
+  const validation = await validateTemplateBindings(c.env.DB, slots);
   if (!validation.ok) return c.json({ error: validation.error }, 400);
 
   const result = await c.env.DB.prepare(`
@@ -134,20 +142,31 @@ nodesRoute.put('/api/v1/nodes/:id', authMiddleware, async (c) => {
   if (!node || node.desired_state === 'revoked') return c.json({ error: '主机不存在或无权限编辑' }, 404);
 
   const ownerId = currentUser.role === 'admin' && body.owner_id ? Number.parseInt(body.owner_id, 10) : node.owner_id;
+  if (!Number.isInteger(ownerId) || ownerId <= 0) return c.json({ error: '所属租户无效' }, 400);
+  if (ownerId !== node.owner_id) {
+    const ownerUser = await c.env.DB.prepare('SELECT id FROM users WHERE id = ?').bind(ownerId).first();
+    if (!ownerUser) return c.json({ error: '所属租户不存在' }, 400);
+  }
   const name = typeof body.name === 'string' && body.name.trim() ? body.name.trim() : node.name;
   const serverIp = body.server_ip !== undefined ? String(body.server_ip).trim() : node.server_ip;
   const status = body.status ? String(body.status).toLowerCase() : node.status;
   if (!['offline', 'online', 'disabled'].includes(status)) return c.json({ error: '节点状态无效' }, 400);
 
   let slots: RequestedNodeSlot[];
-  if (Array.isArray(body.inbounds)) {
+  if (Array.isArray(body.template_ids)) {
+    const rawIds = body.template_ids;
+    if (new Set(rawIds).size !== rawIds.length) {
+      return c.json({ error: '不能重复绑定相同的协议模板' }, 400);
+    }
+    slots = rawIds.filter((tid: any) => Number.isInteger(tid) && tid > 0).map((tid: number) => ({ template_id: tid, enabled: 1 }));
+  } else if (Array.isArray(body.inbounds)) {
     const normalized = normalizeSlots(body.inbounds);
     if (!normalized) return c.json({ error: '节点插槽参数无效' }, 400);
     slots = normalized;
   } else {
     slots = await existingSlots(c.env.DB, id);
   }
-  const validation = await validateTemplateBindings(c.env.DB, ownerId, slots);
+  const validation = await validateTemplateBindings(c.env.DB, slots);
   if (!validation.ok) return c.json({ error: validation.error }, 400);
 
   const desiredState = status === 'disabled' ? 'disabled' : 'active';

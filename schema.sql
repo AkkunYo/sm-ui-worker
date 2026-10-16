@@ -58,11 +58,9 @@ CREATE TABLE IF NOT EXISTS nodes (
 
 CREATE TABLE IF NOT EXISTS inbound_templates (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
-  owner_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
   name TEXT NOT NULL,
   protocol TEXT NOT NULL, -- 'vless' | 'hysteria2' | 'tuic' | 'trojan' | 'anytls'
   listen_port INTEGER NOT NULL DEFAULT 2096,
-  hop_ports TEXT DEFAULT '',
   reality_dest TEXT,
   reality_server_name TEXT,
   reality_short_id TEXT,
@@ -87,7 +85,6 @@ CREATE TABLE IF NOT EXISTS node_inbounds (
 );
 
 CREATE INDEX IF NOT EXISTS idx_node_inbounds_template_id ON node_inbounds(template_id);
-CREATE INDEX IF NOT EXISTS idx_inbound_templates_owner_id ON inbound_templates(owner_id);
 
 CREATE TABLE IF NOT EXISTS traffic_receipts (
   node_id INTEGER NOT NULL REFERENCES nodes(id) ON DELETE CASCADE,

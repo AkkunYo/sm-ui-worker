@@ -75,10 +75,6 @@ function toClashProxy(ep: ResolvedEndpoint) {
     base['obfs-password'] = ep.hy2ObfsPassword;
   }
 
-  if (ep.isHop && ep.hopPorts) {
-    base.ports = ep.hopPorts;
-  }
-
   return base;
 }
 
@@ -178,11 +174,7 @@ function toSingBoxOutbound(ep: ResolvedEndpoint) {
       password: ep.hy2ObfsPassword
     };
   }
-  if (ep.isHop && ep.hopPorts) {
-    outbound.server_ports = [ep.hopPorts.trim().replace(/^(\d+)\s*-\s*(\d+)$/, '$1:$2')];
-  } else {
-    outbound.server_port = ep.port;
-  }
+  outbound.server_port = ep.port;
   return outbound;
 }
 
@@ -219,10 +211,6 @@ export function toUriString(ep: ResolvedEndpoint): string {
   }
   if (ep.certSha256) {
     extraParams += `&pinSHA256=${encodeURIComponent(ep.certSha256)}&pcs=${encodeURIComponent(ep.certSha256)}`;
-  }
-
-  if (ep.isHop && ep.hopPorts) {
-    return `hysteria2://${encodeURIComponent(ep.password || '')}@${ep.server}:${ep.port}?alpn=h3&insecure=1&allowInsecure=1&mport=${encodeURIComponent(ep.hopPorts)}&sni=${encodeURIComponent(ep.sni || ep.server)}&upmbps=${ep.upMbps || 100}&downmbps=${ep.downMbps || 100}${extraParams}#${remark}`;
   }
 
   return `hysteria2://${encodeURIComponent(ep.password || '')}@${ep.server}:${ep.port}?alpn=h3&insecure=1&allowInsecure=1&sni=${encodeURIComponent(ep.sni || ep.server)}&upmbps=${ep.upMbps || 100}&downmbps=${ep.downMbps || 100}${extraParams}#${remark}`;
