@@ -88,3 +88,69 @@ func TestImmediateCoreExitIsNotSuccessful(t *testing.T) {
 		t.Fatal("crashed core acknowledged")
 	}
 }
+
+func TestSyncSubmitsAndAcknowledgesMultipleBatches(t *testing.T) {
+	dir, store := stateFixture(t)
+	_ = store.Update(func(s *AgentState) error {
+		s.DesiredState = "active"
+		s.PendingTraffic = []TrafficBatch{
+			{ID: "batch-1", Deltas: []TrafficDelta{{Username: "alice", Uplink: 10}}},
+			{ID: "batch-2", Deltas: []TrafficDelta{{Username: "bob", Uplink: 20}}},
+		}
+		return nil
+	})
+
+	var receivedBatches []TrafficBatch
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var req SyncRequest
+		_ = json.NewDecoder(r.Body).Decode(&req)
+		receivedBatches = req.TrafficBatches
+		json.NewEncoder(w).Encode(SyncResponse{
+			ProtocolVersion:         2,
+			Status:                  "ok",
+			DesiredState:            "active",
+			AcceptedTrafficBatchIDs: []string{"batch-1", "batch-2"},
+			Reload:                  false,
+		})
+	}))
+	defer server.Close()
+
+	syncWithMaster(Config{MasterURL: server.URL, NodeToken: "token", BaseDir: dir}, 7, store)
+	if len(receivedBatches) != 2 {
+		t.Fatalf("expected 2 batches submitted, got: %d", len(receivedBatches))
+	}
+	state, _ := store.Load()
+	if len(state.PendingTraffic) != 0 {
+		t.Fatalf("expected all batches cleared, got: %#v", state.PendingTraffic)
+	}
+}
+
+func TestDoSyncRequestRetriesOnTransientError(t *testing.T) {
+	attempts := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		attempts++
+		if attempts == 1 {
+			// Simulate a closed/reset connection on the first attempt
+			hj, ok := w.(http.Hijacker)
+			if ok {
+				conn, _, _ := hj.Hijack()
+				conn.Close()
+				return
+			}
+			http.Error(w, "server error", 500)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte(`{"status":"ok"}`))
+	}))
+	defer server.Close()
+
+	resp, err := doSyncRequest(server.URL, "test-token", []byte(`{}`))
+	if err != nil {
+		t.Fatalf("expected retry to succeed, got: %v", err)
+	}
+	defer resp.Body.Close()
+	if attempts != 2 {
+		t.Fatalf("expected 2 attempts (1 failure + 1 retry), got: %d", attempts)
+	}
+}

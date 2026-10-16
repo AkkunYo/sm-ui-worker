@@ -59,6 +59,7 @@ type SyncRequest struct {
 	ApplyError           string         `json:"apply_error,omitempty"`
 	TrafficBatchID       string         `json:"traffic_batch_id,omitempty"`
 	TrafficDeltas        []TrafficDelta `json:"traffic_deltas,omitempty"`
+	TrafficBatches       []TrafficBatch `json:"traffic_batches,omitempty"`
 }
 
 type TrafficDelta struct {
@@ -68,14 +69,15 @@ type TrafficDelta struct {
 }
 
 type SyncResponse struct {
-	ProtocolVersion        int             `json:"protocol_version"`
-	Status                 string          `json:"status"`
-	DesiredState           string          `json:"desired_state"`
-	ConfigVersion          int             `json:"config_version"`
-	ConfigHash             string          `json:"config_hash,omitempty"`
-	Reload                 bool            `json:"reload"`
-	Config                 json.RawMessage `json:"config,omitempty"`
-	AcceptedTrafficBatchID string          `json:"accepted_traffic_batch_id,omitempty"`
+	ProtocolVersion         int             `json:"protocol_version"`
+	Status                  string          `json:"status"`
+	DesiredState            string          `json:"desired_state"`
+	ConfigVersion           int             `json:"config_version"`
+	ConfigHash              string          `json:"config_hash,omitempty"`
+	Reload                  bool            `json:"reload"`
+	Config                  json.RawMessage `json:"config,omitempty"`
+	AcceptedTrafficBatchID  string          `json:"accepted_traffic_batch_id,omitempty"`
+	AcceptedTrafficBatchIDs []string        `json:"accepted_traffic_batch_ids,omitempty"`
 }
 
 var (
@@ -87,7 +89,64 @@ var (
 	cpuMu       sync.Mutex
 	lastTotalCP uint64
 	lastIdleCP  uint64
+
+	httpClient = &http.Client{
+		Timeout: 12 * time.Second,
+		Transport: &http.Transport{
+			Proxy: http.ProxyFromEnvironment,
+			DialContext: (&net.Dialer{
+				Timeout:   5 * time.Second,
+				KeepAlive: 30 * time.Second,
+			}).DialContext,
+			ForceAttemptHTTP2:     true,
+			MaxIdleConns:          10,
+			MaxIdleConnsPerHost:   5,
+			IdleConnTimeout:       15 * time.Second,
+			TLSHandshakeTimeout:   5 * time.Second,
+			ExpectContinueTimeout: 1 * time.Second,
+		},
+	}
 )
+
+func isRetryableNetworkError(err error) bool {
+	if err == nil {
+		return false
+	}
+	s := strings.ToLower(err.Error())
+	return strings.Contains(s, "connection reset") ||
+		strings.Contains(s, "broken pipe") ||
+		strings.Contains(s, "eof") ||
+		strings.Contains(s, "timeout") ||
+		strings.Contains(s, "refused")
+}
+
+func doSyncRequest(syncURL, token string, data []byte) (*http.Response, error) {
+	makeReq := func() (*http.Request, error) {
+		req, err := http.NewRequest("POST", syncURL, bytes.NewReader(data))
+		if err != nil {
+			return nil, err
+		}
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("X-Node-Token", token)
+		return req, nil
+	}
+
+	req, err := makeReq()
+	if err != nil {
+		return nil, err
+	}
+
+	resp, err := httpClient.Do(req)
+	if err != nil && isRetryableNetworkError(err) {
+		log.Printf("[Heartbeat] Transient network error (%v); retrying once...", err)
+		time.Sleep(500 * time.Millisecond)
+		retryReq, reqErr := makeReq()
+		if reqErr == nil {
+			resp, err = httpClient.Do(retryReq)
+		}
+	}
+	return resp, err
+}
 
 const (
 	protocolVersion = 2
@@ -231,9 +290,15 @@ func syncWithMaster(cfg Config, currentVer int, stateStore *StateStore) int {
 
 	var batchID string
 	var trafficDeltas []TrafficDelta
+	var trafficBatches []TrafficBatch
 	if len(state.PendingTraffic) > 0 {
-		batchID = state.PendingTraffic[0].ID
-		trafficDeltas = state.PendingTraffic[0].Deltas
+		maxBatches := 8
+		if len(state.PendingTraffic) < maxBatches {
+			maxBatches = len(state.PendingTraffic)
+		}
+		trafficBatches = state.PendingTraffic[:maxBatches]
+		batchID = trafficBatches[0].ID
+		trafficDeltas = trafficBatches[0].Deltas
 	}
 	reqPayload := SyncRequest{
 		ProtocolVersion:      protocolVersion,
@@ -250,6 +315,7 @@ func syncWithMaster(cfg Config, currentVer int, stateStore *StateStore) int {
 		ApplyError:           state.LastApplyError,
 		TrafficBatchID:       batchID,
 		TrafficDeltas:        trafficDeltas,
+		TrafficBatches:       trafficBatches,
 	}
 
 	data, err := json.Marshal(reqPayload)
@@ -257,15 +323,7 @@ func syncWithMaster(cfg Config, currentVer int, stateStore *StateStore) int {
 		return currentVer
 	}
 	syncURL := fmt.Sprintf("%s/api/v2/node/sync", cfg.MasterURL)
-	req, err := http.NewRequest("POST", syncURL, bytes.NewBuffer(data))
-	if err != nil {
-		return currentVer
-	}
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("X-Node-Token", cfg.NodeToken)
-
-	client := &http.Client{Timeout: 10 * time.Second}
-	resp, err := client.Do(req)
+	resp, err := doSyncRequest(syncURL, cfg.NodeToken, data)
 	if err != nil {
 		log.Printf("[Heartbeat] Sync failed: %v", err)
 		return currentVer
@@ -289,9 +347,15 @@ func syncWithMaster(cfg Config, currentVer int, stateStore *StateStore) int {
 		log.Printf("[Heartbeat] Unsupported master protocol version %d", syncResp.ProtocolVersion)
 		return currentVer
 	}
-	if syncResp.AcceptedTrafficBatchID != "" {
-		if err := stateStore.AcknowledgeTraffic(syncResp.AcceptedTrafficBatchID); err != nil {
-			log.Printf("[Traffic] Cannot acknowledge batch %s: %v", syncResp.AcceptedTrafficBatchID, err)
+	var ackIDs []string
+	if len(syncResp.AcceptedTrafficBatchIDs) > 0 {
+		ackIDs = syncResp.AcceptedTrafficBatchIDs
+	} else if syncResp.AcceptedTrafficBatchID != "" {
+		ackIDs = []string{syncResp.AcceptedTrafficBatchID}
+	}
+	if len(ackIDs) > 0 {
+		if err := stateStore.AcknowledgeTrafficBatches(ackIDs); err != nil {
+			log.Printf("[Traffic] Cannot acknowledge batches %v: %v", ackIDs, err)
 		}
 	}
 	if syncResp.DesiredState != "" && syncResp.DesiredState != state.DesiredState {

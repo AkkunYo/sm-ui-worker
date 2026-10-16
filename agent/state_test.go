@@ -43,6 +43,24 @@ func TestStateStorePersistsPendingTrafficAndAcknowledgement(t *testing.T) {
 	if len(loaded.PendingTraffic) != 0 {
 		t.Fatalf("acknowledged batch remains pending: %#v", loaded.PendingTraffic)
 	}
+
+	// Test multi-batch acknowledge
+	multi := []TrafficBatch{
+		{ID: "b-1", Deltas: []TrafficDelta{{Username: "u1", Uplink: 10}}},
+		{ID: "b-2", Deltas: []TrafficDelta{{Username: "u2", Uplink: 20}}},
+		{ID: "b-3", Deltas: []TrafficDelta{{Username: "u3", Uplink: 30}}},
+	}
+	_ = store.Update(func(s *AgentState) error {
+		s.PendingTraffic = multi
+		return nil
+	})
+	if err := store.AcknowledgeTrafficBatches([]string{"b-1", "b-3"}); err != nil {
+		t.Fatalf("acknowledge multiple batches: %v", err)
+	}
+	loaded, err = store.Load()
+	if err != nil || len(loaded.PendingTraffic) != 1 || loaded.PendingTraffic[0].ID != "b-2" {
+		t.Fatalf("expected only b-2 remaining, got: %#v", loaded.PendingTraffic)
+	}
 }
 
 func TestStateStorePersistsRevokedDesiredStateAcrossRestart(t *testing.T) {
