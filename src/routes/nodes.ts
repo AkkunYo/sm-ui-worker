@@ -7,26 +7,6 @@ import type { AppBindings, AppVariables, JwtUser } from '../types';
 
 export const nodesRoute = new Hono<{ Bindings: AppBindings; Variables: AppVariables }>();
 
-function normalizeSlots(raw: unknown): RequestedNodeSlot[] | null | undefined {
-  if (!Array.isArray(raw)) return null;
-  const slots: RequestedNodeSlot[] = [];
-  for (const item of raw) {
-    const templateId = typeof item === 'number'
-      ? item
-      : Number.parseInt(String(item?.template_id || ''), 10);
-    if (!Number.isInteger(templateId) || templateId <= 0) return undefined;
-    const enabled = (typeof item === 'object' && item !== null && item.enabled !== undefined)
-      ? (item.enabled ? 1 : 0) : 1;
-    slots.push({
-      template_id: templateId,
-      enabled
-    });
-  }
-  const ids = slots.map(slot => slot.template_id);
-  if (new Set(ids).size !== ids.length) return undefined;
-  return slots;
-}
-
 async function existingSlots(db: D1Database, nodeId: number): Promise<RequestedNodeSlot[]> {
   const rows = (await db.prepare('SELECT template_id, enabled FROM node_inbounds WHERE node_id = ? ORDER BY id ASC').bind(nodeId).all<RequestedNodeSlot>()).results;
   return rows.map(row => ({
@@ -103,10 +83,6 @@ nodesRoute.post('/api/v1/nodes', authMiddleware, async (c) => {
       return c.json({ error: '不能重复绑定相同的协议模板' }, 400);
     }
     slots = rawIds.filter((tid: any) => Number.isInteger(tid) && tid > 0).map((tid: number) => ({ template_id: tid, enabled: 1 }));
-  } else if (Array.isArray(body.inbounds)) {
-    const normalized = normalizeSlots(body.inbounds);
-    if (!normalized) return c.json({ error: '节点插槽参数无效' }, 400);
-    slots = normalized;
   } else {
     const defaults = (await c.env.DB.prepare(`SELECT id FROM inbound_templates WHERE is_default = 1 ORDER BY id ASC`).all<{ id: number }>()).results;
     slots = defaults.map(template => ({
@@ -159,10 +135,6 @@ nodesRoute.put('/api/v1/nodes/:id', authMiddleware, async (c) => {
       return c.json({ error: '不能重复绑定相同的协议模板' }, 400);
     }
     slots = rawIds.filter((tid: any) => Number.isInteger(tid) && tid > 0).map((tid: number) => ({ template_id: tid, enabled: 1 }));
-  } else if (Array.isArray(body.inbounds)) {
-    const normalized = normalizeSlots(body.inbounds);
-    if (!normalized) return c.json({ error: '节点插槽参数无效' }, 400);
-    slots = normalized;
   } else {
     slots = await existingSlots(c.env.DB, id);
   }

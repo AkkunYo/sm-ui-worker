@@ -217,7 +217,7 @@ test('node deletion hides from list, frees name for immediate recreation, and re
   const list = await (await request('/api/v1/nodes', undefined, 2, 'GET')).json();
   assert.equal(list.length, 0);
   // Re-creation with same name succeeds immediately
-  res = await request('/api/v1/nodes', { name: 'original', owner_id: 2, inbounds: [{ template_id: 1 }] }, 2);
+  res = await request('/api/v1/nodes', { name: 'original', owner_id: 2, template_ids: [1] }, 2);
   assert.equal(res.status, 200);
   // Revived PUT is rejected
   res = await request('/api/v1/nodes/1', { status: 'online' }, 2, 'PUT');

@@ -92,7 +92,7 @@
             </span>
             <div class="min-w-0">
               <p class="text-sm font-semibold text-white truncate">{{ node.name }}</p>
-              <p class="text-xs font-mono text-slate-400 truncate">{{ node.server_ip }}:{{ node.proxy_port }}</p>
+              <p class="text-xs font-mono text-slate-400 truncate">{{ node.server_ip }}</p>
             </div>
           </div>
 
