@@ -102,6 +102,11 @@ async function settleTraffic(db: D1Database, node: SyncNode, owner: UserRecord |
     await db.batch(dbStatements);
   }
 
+  // Opportunistic cleanup of stale receipts older than 3 days (non-blocking)
+  db.prepare("DELETE FROM traffic_receipts WHERE received_at < datetime('now', '-3 days')")
+    .run()
+    .catch(() => {});
+
   return acceptedIds;
 }
 
@@ -130,7 +135,7 @@ syncRoute.post('/api/v2/node/sync', async (c) => {
       status = ?, server_ip = CASE WHEN TRIM(COALESCE(server_ip, '')) = '' AND ? <> '' THEN ? ELSE server_ip END,
       address_locked = CASE WHEN TRIM(COALESCE(server_ip, '')) = '' AND ? <> '' THEN 1 ELSE address_locked END,
       last_heartbeat_at = ?, rtt_ms = ?, cpu_percent = ?, memory_percent = ?, uptime_seconds = ?,
-      core_version = ?, agent_version = ?, protocol_version = ?,
+      core_version = ?, agent_version = ?,
       updated_at = datetime('now')
     WHERE id = ?
   `).bind(
@@ -144,7 +149,6 @@ syncRoute.post('/api/v2/node/sync', async (c) => {
     Number.isFinite(Number(body.uptime_seconds)) ? Number(body.uptime_seconds) : 0,
     typeof body.core_version === 'string' ? body.core_version.slice(0, 64) : 'unknown',
     typeof body.agent_version === 'string' ? body.agent_version.slice(0, 64) : '',
-    PROTOCOL_VERSION,
     node.id
   ).run();
 

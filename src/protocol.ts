@@ -44,7 +44,6 @@ export interface NodeRecord {
   server_ip: string;
   proxy_port?: number;
   hop_ports?: string | null;
-  protocol?: string;
   token: string;
   status: string;
   core_version?: string;
