@@ -62,185 +62,149 @@
         </button>
       </div>
 
-      <!-- Template Cards Grid -->
-      <div v-else class="grid grid-cols-1 md:grid-cols-2 gap-4">
-        <div
-          v-for="tmpl in filteredTemplates"
-          :key="tmpl.id"
-          class="rounded-2xl border bg-slate-900/90 p-5 space-y-4 flex flex-col justify-between transition hover:border-slate-700"
-          :class="getCardBorderClass(tmpl.protocol)"
-        >
-          <div class="space-y-3.5">
-            <!-- Header Badges -->
-            <div class="flex items-start justify-between gap-2">
-              <div class="flex flex-wrap items-center gap-1.5">
-                <!-- Protocol Badge -->
-                <span
-                  class="px-2.5 py-0.5 rounded-lg text-xs font-bold uppercase tracking-wider border flex items-center gap-1.5"
-                  :class="getProtoBadge(tmpl.protocol).class"
-                >
-                  <span class="w-1.5 h-1.5 rounded-full" :class="getProtoBadge(tmpl.protocol).dot"></span>
-                  {{ getProtoBadge(tmpl.protocol).label }}
-                </span>
+      <!-- Compact Templates Table -->
+      <div v-else class="bg-slate-900 border border-slate-800 rounded-2xl overflow-hidden shadow-xl">
+        <div class="overflow-x-auto">
+          <table class="w-full text-left text-sm text-slate-300">
+            <thead class="bg-slate-950/60 text-xs uppercase text-slate-400 border-b border-slate-800">
+              <tr>
+                <th class="px-5 py-3.5 font-semibold">模板名称</th>
+                <th class="px-4 py-3.5 font-semibold">协议类型</th>
+                <th class="px-4 py-3.5 font-semibold">服务端口</th>
+                <th class="px-5 py-3.5 font-semibold">伪装 / 核心参数</th>
+                <th class="px-4 py-3.5 font-semibold">混淆状态</th>
+                <th class="px-4 py-3.5 font-semibold">归属范围</th>
+                <th class="px-4 py-3.5 font-semibold text-right">操作</th>
+              </tr>
+            </thead>
+            <tbody class="divide-y divide-slate-800">
+              <tr v-for="tmpl in filteredTemplates" :key="tmpl.id" class="hover:bg-slate-800/30 transition">
+                <!-- 1. Name & Badges -->
+                <td class="px-5 py-3.5">
+                  <div class="flex items-center space-x-2">
+                    <span class="font-semibold text-white tracking-tight">{{ tmpl.name }}</span>
+                    <span
+                      v-if="tmpl.is_default"
+                      class="px-1.5 py-0.5 rounded text-[10px] font-medium bg-emerald-500/10 text-emerald-400 border border-emerald-500/20"
+                    >
+                      默认
+                    </span>
+                  </div>
+                  <div class="text-[11px] text-slate-500 font-mono mt-0.5">
+                    #{{ tmpl.id }} · {{ tmpl.updated_at ? tmpl.updated_at.slice(0, 10) : '近期' }}
+                  </div>
+                </td>
 
-                <!-- Port Badge -->
-                <span class="px-2 py-0.5 rounded-lg text-[11px] font-mono font-medium bg-slate-800 text-slate-200 border border-slate-700">
-                  :{{ tmpl.listen_port || 2096 }}
-                </span>
+                <!-- 2. Protocol Badge -->
+                <td class="px-4 py-3.5">
+                  <span
+                    class="px-2.5 py-0.5 rounded-lg text-xs font-bold uppercase tracking-wider border inline-flex items-center gap-1.5"
+                    :class="getProtoBadge(tmpl.protocol).class"
+                  >
+                    <span class="w-1.5 h-1.5 rounded-full" :class="getProtoBadge(tmpl.protocol).dot"></span>
+                    {{ getProtoBadge(tmpl.protocol).label }}
+                  </span>
+                </td>
 
-                <!-- Hop Badge -->
-                <span
-                  v-if="tmpl.hop_ports"
-                  class="px-2 py-0.5 rounded-lg text-[11px] font-mono font-medium bg-sky-500/10 text-sky-300 border border-sky-500/20"
-                >
-                  ⇄跳跃: {{ tmpl.hop_ports }}
-                </span>
+                <!-- 3. Ports -->
+                <td class="px-4 py-3.5 font-mono text-xs">
+                  <div class="flex flex-wrap items-center gap-1.5">
+                    <span class="px-2 py-0.5 rounded bg-slate-800 text-slate-200 border border-slate-700 font-semibold">
+                      :{{ tmpl.listen_port || 2096 }}
+                    </span>
+                    <span
+                      v-if="tmpl.hop_ports"
+                      class="px-1.5 py-0.5 rounded text-[10px] bg-sky-500/10 text-sky-300 border border-sky-500/20"
+                      title="端口跳跃范围"
+                    >
+                      ⇄ {{ tmpl.hop_ports }}
+                    </span>
+                  </div>
+                </td>
 
-                <!-- Obfs Badge -->
-                <span
-                  v-if="tmpl.hy2_obfs_password"
-                  class="px-2 py-0.5 rounded-lg text-[11px] font-medium bg-amber-500/15 text-amber-300 border border-amber-500/30"
-                >
-                  🛡 混淆: Salamander
-                </span>
+                <!-- 4. Parameters -->
+                <td class="px-5 py-3.5 text-xs font-mono">
+                  <div v-if="tmpl.protocol === 'vless' || tmpl.protocol === 'trojan'" class="space-y-0.5">
+                    <div class="text-slate-200 truncate max-w-xs" :title="tmpl.reality_server_name">
+                      SNI: <span class="text-emerald-400">{{ tmpl.reality_server_name || '-' }}</span>
+                    </div>
+                    <div class="text-slate-500 text-[11px] truncate max-w-xs">
+                      Dest: {{ tmpl.reality_dest || '-' }}
+                    </div>
+                  </div>
+                  <div v-else-if="tmpl.protocol === 'hysteria2'" class="space-y-0.5">
+                    <div class="text-slate-300">
+                      上下行: <span class="text-sky-300 font-semibold">{{ tmpl.hy2_up_mbps || 100 }}M</span> / <span class="text-sky-300 font-semibold">{{ tmpl.hy2_down_mbps || 100 }}M</span>
+                    </div>
+                    <div class="text-slate-500 text-[11px] truncate max-w-xs" :title="tmpl.hy2_masquerade">
+                      {{ tmpl.hy2_masquerade || 'https://bing.com' }}
+                    </div>
+                  </div>
+                  <div v-else-if="tmpl.protocol === 'tuic'" class="text-slate-300">
+                    拥塞算法: <span class="text-violet-300 font-semibold uppercase">{{ tmpl.tuic_congestion_control || 'BBR' }}</span> · ALPN h3
+                  </div>
+                  <div v-else-if="tmpl.protocol === 'anytls'" class="text-slate-400">
+                    TLS 1.3 原生抗封锁流
+                  </div>
+                </td>
 
-                <!-- Scope Badge -->
-                <span
-                  v-if="tmpl.owner_id === null"
-                  class="px-2 py-0.5 rounded-lg text-[11px] font-medium bg-violet-500/10 text-violet-300 border border-violet-500/20"
-                >
-                  🌐 系统
-                </span>
-                <span
-                  v-else
-                  class="px-2 py-0.5 rounded-lg text-[11px] font-medium bg-amber-500/10 text-amber-300 border border-amber-500/20"
-                >
-                  🔒 私有<span v-if="isAdmin && tmpl.owner_username"> ({{ tmpl.owner_username }})</span>
-                </span>
+                <!-- 5. Obfs -->
+                <td class="px-4 py-3.5 text-xs">
+                  <div v-if="tmpl.hy2_obfs_password" class="inline-flex items-center space-x-1.5 px-2 py-0.5 rounded-lg bg-amber-500/10 border border-amber-500/20 text-amber-300 font-mono text-[11px]">
+                    <span>🛡 Salamander</span>
+                    <button
+                      type="button"
+                      @click="copyText(tmpl.hy2_obfs_password)"
+                      class="text-amber-400 hover:text-white transition"
+                      title="复制混淆密码"
+                    >
+                      <Copy class="w-3 h-3" />
+                    </button>
+                  </div>
+                  <span v-else class="text-slate-600 text-xs">—</span>
+                </td>
 
-                <!-- Default Badge -->
-                <span
-                  v-if="tmpl.is_default"
-                  class="px-2 py-0.5 rounded-lg text-[11px] font-medium bg-emerald-500/10 text-emerald-400 border border-emerald-500/20"
-                >
-                  ★ 默认
-                </span>
-              </div>
+                <!-- 6. Scope -->
+                <td class="px-4 py-3.5 text-xs">
+                  <span
+                    v-if="tmpl.owner_id === null"
+                    class="px-2 py-0.5 rounded text-[11px] font-medium bg-violet-500/10 text-violet-300 border border-violet-500/20"
+                  >
+                    🌐 系统公共
+                  </span>
+                  <span
+                    v-else
+                    class="px-2 py-0.5 rounded text-[11px] font-medium bg-amber-500/10 text-amber-300 border border-amber-500/20"
+                  >
+                    🔒 {{ tmpl.owner_username || '租户私有' }}
+                  </span>
+                </td>
 
-              <!-- Action Buttons -->
-              <div class="flex items-center space-x-1 shrink-0">
-                <button
-                  v-if="canEdit(tmpl)"
-                  @click="openEditModal(tmpl)"
-                  class="p-1.5 text-slate-400 hover:text-emerald-400 hover:bg-emerald-500/10 rounded-lg transition"
-                  title="编辑模板"
-                >
-                  <Sliders class="w-4 h-4" />
-                </button>
-                <button
-                  v-if="canEdit(tmpl)"
-                  @click="deleteTemplate(tmpl)"
-                  class="p-1.5 text-slate-400 hover:text-rose-400 hover:bg-rose-500/10 rounded-lg transition"
-                  title="删除模板"
-                >
-                  <Trash2 class="w-4 h-4" />
-                </button>
-                <span v-else class="text-[11px] text-slate-500 px-2 py-1">只读</span>
-              </div>
-            </div>
-
-            <!-- Name -->
-            <div>
-              <h3 class="text-base font-semibold text-white tracking-tight">{{ tmpl.name }}</h3>
-              <p class="text-[11px] text-slate-500 mt-0.5 font-mono">ID: #{{ tmpl.id }} · 更新于 {{ tmpl.updated_at || tmpl.created_at || '最近' }}</p>
-            </div>
-
-            <!-- Details Block: VLESS Reality / Trojan Reality -->
-            <div v-if="tmpl.protocol === 'vless' || tmpl.protocol === 'trojan'" class="space-y-2 pt-1 text-xs">
-              <div class="grid grid-cols-2 gap-2 p-3 rounded-xl bg-slate-950/60 border border-slate-800/80 font-mono">
-                <div>
-                  <span class="text-slate-500 text-[10px] block">SNI 伪装域名</span>
-                  <span class="text-slate-200 truncate block font-medium">{{ tmpl.reality_server_name || '未设置' }}</span>
-                </div>
-                <div>
-                  <span class="text-slate-500 text-[10px] block">回落目标 (Dest)</span>
-                  <span class="text-slate-200 truncate block font-medium">{{ tmpl.reality_dest || '未设置' }}</span>
-                </div>
-              </div>
-
-              <div class="p-3 rounded-xl bg-slate-950/60 border border-slate-800/80 space-y-1.5 font-mono text-[11px]">
-                <div class="flex items-center justify-between">
-                  <span class="text-slate-500 text-[10px]">ShortID:</span>
-                  <span class="text-slate-300 font-bold">{{ tmpl.reality_short_id || '0123456789abcdef' }}</span>
-                </div>
-                <div class="flex items-center justify-between gap-2">
-                  <span class="text-slate-500 text-[10px] shrink-0">Reality 密钥:</span>
-                  <span class="text-slate-400 truncate text-[10px]">按租户自动派发</span>
-                </div>
-              </div>
-            </div>
-
-            <!-- Details Block: Hysteria 2 -->
-            <div v-else-if="tmpl.protocol === 'hysteria2'" class="space-y-2 pt-1 text-xs">
-              <div class="grid grid-cols-2 gap-2 p-3 rounded-xl bg-slate-950/60 border border-slate-800/80 font-mono">
-                <div>
-                  <span class="text-slate-500 text-[10px] block">服务器上行 (发送)</span>
-                  <span class="text-sky-300 text-sm font-bold">{{ tmpl.hy2_up_mbps || 100 }} <span class="text-[10px] font-normal text-slate-400">Mbps</span></span>
-                </div>
-                <div>
-                  <span class="text-slate-500 text-[10px] block">服务器下行 (接收)</span>
-                  <span class="text-sky-300 text-sm font-bold">{{ tmpl.hy2_down_mbps || 100 }} <span class="text-[10px] font-normal text-slate-400">Mbps</span></span>
-                </div>
-              </div>
-
-              <div class="p-3 rounded-xl bg-slate-950/60 border border-slate-800/80 space-y-1.5 font-mono text-[11px]">
-                <div class="flex items-center justify-between gap-2">
-                  <span class="text-slate-500 text-[10px]">伪装回落网址:</span>
-                  <span class="text-slate-300 truncate">{{ tmpl.hy2_masquerade || 'https://bing.com' }}</span>
-                </div>
-                <div v-if="tmpl.hy2_obfs_password" class="flex items-center justify-between gap-2 text-amber-300">
-                  <span class="text-slate-500 text-[10px]">混淆密码 (Salamander):</span>
-                  <span class="truncate font-bold">{{ tmpl.hy2_obfs_password }}</span>
-                </div>
-                <div class="text-[10px] text-slate-500">
-                  自签 TLS 证书支持 SHA-256 指纹锁定 (Cert Pinning)。
-                </div>
-              </div>
-            </div>
-
-            <!-- Details Block: TUIC v5 -->
-            <div v-else-if="tmpl.protocol === 'tuic'" class="space-y-2 pt-1 text-xs">
-              <div class="p-3 rounded-xl bg-slate-950/60 border border-slate-800/80 space-y-1.5 font-mono text-[11px]">
-                <div class="flex items-center justify-between">
-                  <span class="text-slate-500 text-[10px]">拥塞控制算法:</span>
-                  <span class="text-violet-300 uppercase font-bold">{{ tmpl.tuic_congestion_control || 'BBR' }}</span>
-                </div>
-                <div class="flex items-center justify-between">
-                  <span class="text-slate-500 text-[10px]">ALPN 协商:</span>
-                  <span class="text-slate-300">h3</span>
-                </div>
-                <div class="text-[10px] text-slate-500">
-                  TUIC v5 原生支持多用户鉴权与证书指纹绑定。
-                </div>
-              </div>
-            </div>
-
-            <!-- Details Block: AnyTLS -->
-            <div v-else-if="tmpl.protocol === 'anytls'" class="space-y-2 pt-1 text-xs">
-              <div class="p-3 rounded-xl bg-slate-950/60 border border-slate-800/80 space-y-1 font-mono text-[11px]">
-                <div class="text-slate-300 font-semibold">sing-box 1.12+ 原生 AnyTLS 抗指纹探测</div>
-                <div class="text-[10px] text-slate-500">
-                  使用标准自签名证书与自适应填充保护。
-                </div>
-              </div>
-            </div>
-          </div>
-
-          <!-- Bottom Footer Note -->
-          <div class="pt-3 border-t border-slate-800/60 flex items-center justify-between text-[11px] text-slate-500">
-            <span>端口由主模板统一管控</span>
-            <span class="text-slate-400 font-mono">Slot Ready</span>
-          </div>
+                <!-- 7. Actions -->
+                <td class="px-4 py-3.5 text-right">
+                  <div class="flex items-center justify-end space-x-1">
+                    <button
+                      v-if="canEdit(tmpl)"
+                      @click="openEditModal(tmpl)"
+                      class="p-1.5 text-slate-400 hover:text-emerald-400 hover:bg-emerald-500/10 rounded-lg transition"
+                      title="编辑模板"
+                    >
+                      <Sliders class="w-4 h-4" />
+                    </button>
+                    <button
+                      v-if="canEdit(tmpl)"
+                      @click="deleteTemplate(tmpl)"
+                      class="p-1.5 text-slate-400 hover:text-rose-400 hover:bg-rose-500/10 rounded-lg transition"
+                      title="删除模板"
+                    >
+                      <Trash2 class="w-4 h-4" />
+                    </button>
+                    <span v-else class="text-[11px] text-slate-600 px-2">只读</span>
+                  </div>
+                </td>
+              </tr>
+            </tbody>
+          </table>
         </div>
       </div>
     </div>
@@ -609,7 +573,7 @@
 
 <script setup>
 import { ref, computed, onMounted } from 'vue'
-import { Search, Globe, X, Plus, Trash2, Sliders } from 'lucide-vue-next'
+import { Search, Globe, X, Plus, Trash2, Sliders, Copy } from 'lucide-vue-next'
 import { request, getUser } from '../api'
 import PageSkeleton from '../components/PageSkeleton.vue'
 import { usePageRead } from '../composables/usePageRead'
@@ -726,17 +690,6 @@ function getFilteredCount(tabId) {
   if (tabId === 'system') return templates.value.filter(t => t.owner_id === null).length
   if (tabId === 'private') return templates.value.filter(t => t.owner_id !== null).length
   return templates.value.length
-}
-
-function getCardBorderClass(proto) {
-  switch (proto) {
-    case 'vless': return 'border-emerald-500/20'
-    case 'hysteria2': return 'border-sky-500/20'
-    case 'tuic': return 'border-violet-500/20'
-    case 'trojan': return 'border-amber-500/20'
-    case 'anytls': return 'border-rose-500/20'
-    default: return 'border-slate-800'
-  }
 }
 
 function getProtoBadge(proto) {
