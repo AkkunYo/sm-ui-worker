@@ -96,7 +96,6 @@ nodesRoute.post('/api/v1/nodes', authMiddleware, async (c) => {
   const serverIp = typeof body.server_ip === 'string' ? body.server_ip.trim() : '';
   const proxyPort = Number.parseInt(body.proxy_port, 10) || 2096;
   const hopPorts = typeof body.hop_ports === 'string' ? body.hop_ports.trim() : '';
-  const protocol = typeof body.protocol === 'string' ? body.protocol.toLowerCase() : 'all';
   const token = generateToken(32);
 
   let slots: RequestedNodeSlot[];
@@ -117,9 +116,9 @@ nodesRoute.post('/api/v1/nodes', authMiddleware, async (c) => {
   if (!validation.ok) return c.json({ error: validation.error }, 400);
 
   const result = await c.env.DB.prepare(`
-    INSERT INTO nodes (owner_id, name, server_ip, proxy_port, hop_ports, protocol, token, status, desired_state, protocol_version, address_locked)
-    VALUES (?, ?, ?, ?, ?, ?, ?, 'offline', 'active', 2, ?)
-  `).bind(ownerId, name, serverIp, proxyPort, hopPorts, protocol, token, serverIp ? 1 : 0).run();
+    INSERT INTO nodes (owner_id, name, server_ip, proxy_port, hop_ports, token, status, desired_state, address_locked)
+    VALUES (?, ?, ?, ?, ?, ?, 'offline', 'active', ?)
+  `).bind(ownerId, name, serverIp, proxyPort, hopPorts, token, serverIp ? 1 : 0).run();
   const nodeId = result.meta.last_row_id;
   try {
     await c.env.DB.batch(insertSlotStatements(c.env.DB, nodeId as number, validation.slots));
@@ -128,7 +127,7 @@ nodesRoute.post('/api/v1/nodes', authMiddleware, async (c) => {
     throw error;
   }
 
-  return c.json({ id: nodeId, name, token, server_ip: serverIp, proxy_port: proxyPort, hop_ports: hopPorts, protocol, status: 'offline', owner_id: ownerId });
+  return c.json({ id: nodeId, name, token, server_ip: serverIp, proxy_port: proxyPort, hop_ports: hopPorts, status: 'offline', owner_id: ownerId });
 });
 
 nodesRoute.put('/api/v1/nodes/:id', authMiddleware, async (c) => {
@@ -145,7 +144,6 @@ nodesRoute.put('/api/v1/nodes/:id', authMiddleware, async (c) => {
   const serverIp = body.server_ip !== undefined ? String(body.server_ip).trim() : node.server_ip;
   const proxyPort = body.proxy_port !== undefined ? Number.parseInt(body.proxy_port, 10) : node.proxy_port;
   const hopPorts = body.hop_ports !== undefined ? String(body.hop_ports).trim() : (node.hop_ports || '');
-  const protocol = body.protocol ? String(body.protocol).toLowerCase() : node.protocol;
   const status = body.status ? String(body.status).toLowerCase() : node.status;
   if (!['offline', 'online', 'disabled'].includes(status)) return c.json({ error: '节点状态无效' }, 400);
 
@@ -162,11 +160,11 @@ nodesRoute.put('/api/v1/nodes/:id', authMiddleware, async (c) => {
 
   const desiredState = status === 'disabled' ? 'disabled' : 'active';
   const statements: D1PreparedStatement[] = [c.env.DB.prepare(`
-    UPDATE nodes SET owner_id = ?, name = ?, server_ip = ?, proxy_port = ?, hop_ports = ?, protocol = ?, status = ?,
+    UPDATE nodes SET owner_id = ?, name = ?, server_ip = ?, proxy_port = ?, hop_ports = ?, status = ?,
       desired_state = ?, revoked_at = CASE WHEN ? = 'disabled' THEN COALESCE(revoked_at, datetime('now')) ELSE NULL END,
       desired_config_hash = '', address_locked = CASE WHEN TRIM(?) <> '' THEN 1 ELSE address_locked END,
       updated_at = datetime('now') WHERE id = ?
-  `).bind(ownerId, name, serverIp, proxyPort, hopPorts, protocol, status, desiredState, status, serverIp, id)];
+  `).bind(ownerId, name, serverIp, proxyPort, hopPorts, status, desiredState, status, serverIp, id)];
   statements.push(c.env.DB.prepare('DELETE FROM node_inbounds WHERE node_id = ?').bind(id));
   statements.push(...insertSlotStatements(c.env.DB, id, validation.slots));
   await c.env.DB.batch(statements);
