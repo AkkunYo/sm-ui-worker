@@ -35,6 +35,12 @@ app.route('', templatesRoute);
 app.route('', usersRoute);
 app.route('', subscriptionRoute);
 
+// Global error handler
+app.onError((err, c) => {
+  console.error('[Unhandled Error]', c.req.method, c.req.url, err);
+  return c.json({ error: err.message || 'Internal Server Error' }, 500);
+});
+
 // Fallback to static assets
 app.get('*', async (c) => {
   if (c.env.ASSETS) {

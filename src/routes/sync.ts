@@ -21,54 +21,88 @@ type SyncNode = NodeRecord & {
 
 export const syncRoute = new Hono<{ Bindings: AppBindings; Variables: AppVariables }>();
 
+interface NormalizedTrafficBatch {
+  id: string;
+  deltas: any[];
+}
+
 /**
- * Settle one traffic batch and return its ID so the agent can drop it.
+ * Settle traffic batches and return their IDs so the agent can drop them.
+ * Supports both multi-batch payload (traffic_batches) and legacy single-batch
+ * payload (traffic_batch_id + traffic_deltas).
  * Invalid deltas (e.g. the previous tenant's traffic after an owner change)
  * are dropped instead of rejecting the heartbeat: a batch that can never be
  * accepted must not block config delivery forever. A replayed batch ID is
  * settled by its first receipt and never counted twice.
  */
-async function settleTraffic(db: D1Database, node: SyncNode, owner: UserRecord | null, body: any): Promise<string> {
-  const batchId = typeof body.traffic_batch_id === 'string' ? body.traffic_batch_id.trim() : '';
-  if (!batchId || batchId.length > 128) return '';
-  if (!owner) return batchId;
-  const deltas: any[] = Array.isArray(body.traffic_deltas) ? body.traffic_deltas.slice(0, MAX_TRAFFIC_DELTAS) : [];
+async function settleTraffic(db: D1Database, node: SyncNode, owner: UserRecord | null, body: any): Promise<string[]> {
+  const batches: NormalizedTrafficBatch[] = [];
+  if (Array.isArray(body?.traffic_batches)) {
+    for (const b of body.traffic_batches.slice(0, 16)) {
+      const id = typeof b?.id === 'string' ? b.id.trim() : (typeof b?.traffic_batch_id === 'string' ? b.traffic_batch_id.trim() : '');
+      const deltas = Array.isArray(b?.deltas) ? b.deltas : (Array.isArray(b?.traffic_deltas) ? b.traffic_deltas : []);
+      if (id && id.length <= 128) {
+        batches.push({ id, deltas });
+      }
+    }
+  } else if (typeof body?.traffic_batch_id === 'string' && body.traffic_batch_id.trim()) {
+    const id = body.traffic_batch_id.trim();
+    if (id.length <= 128) {
+      const deltas = Array.isArray(body.traffic_deltas) ? body.traffic_deltas : [];
+      batches.push({ id, deltas });
+    }
+  }
 
-  let up = 0;
-  let down = 0;
-  for (const delta of deltas) {
-    const username = typeof delta?.username === 'string' ? delta.username.trim() : '';
-    const deltaUp = Number(delta?.uplink);
-    const deltaDown = Number(delta?.downlink);
-    const validBytes = [deltaUp, deltaDown].every(v => Number.isSafeInteger(v) && v >= 0 && v <= MAX_DELTA_BYTES);
-    if (username !== owner.username || !validBytes) {
-      console.warn('[sync] dropped traffic delta', { node: node.id, batch: batchId, username });
+  if (batches.length === 0) return [];
+  if (!owner) return batches.map(b => b.id);
+
+  const acceptedIds: string[] = [];
+  const dbStatements: D1PreparedStatement[] = [];
+
+  for (const batch of batches) {
+    let up = 0;
+    let down = 0;
+    for (const delta of batch.deltas.slice(0, MAX_TRAFFIC_DELTAS)) {
+      const username = typeof delta?.username === 'string' ? delta.username.trim() : '';
+      const deltaUp = Number(delta?.uplink);
+      const deltaDown = Number(delta?.downlink);
+      const validBytes = [deltaUp, deltaDown].every(v => Number.isSafeInteger(v) && v >= 0 && v <= MAX_DELTA_BYTES);
+      if (username !== owner.username || !validBytes) {
+        console.warn('[sync] dropped traffic delta', { node: node.id, batch: batch.id, username });
+        continue;
+      }
+      up += deltaUp;
+      down += deltaDown;
+    }
+
+    acceptedIds.push(batch.id);
+
+    if (up === 0 && down === 0) continue;
+
+    const existing = await db.prepare('SELECT uplink_bytes, downlink_bytes FROM traffic_receipts WHERE node_id = ? AND batch_id = ?')
+      .bind(node.id, batch.id).first<{ uplink_bytes: number; downlink_bytes: number }>();
+    if (existing) {
+      if (existing.uplink_bytes !== up || existing.downlink_bytes !== down) {
+        console.warn('[sync] traffic batch replayed with different totals; first receipt kept', { node: node.id, batch: batch.id });
+      }
       continue;
     }
-    up += deltaUp;
-    down += deltaDown;
-  }
-  if (up === 0 && down === 0) return batchId;
 
-  const existing = await db.prepare('SELECT uplink_bytes, downlink_bytes FROM traffic_receipts WHERE node_id = ? AND batch_id = ?')
-    .bind(node.id, batchId).first<{ uplink_bytes: number; downlink_bytes: number }>();
-  if (existing) {
-    if (existing.uplink_bytes !== up || existing.downlink_bytes !== down) {
-      console.warn('[sync] traffic batch replayed with different totals; first receipt kept', { node: node.id, batch: batchId });
-    }
-    return batchId;
+    dbStatements.push(
+      db.prepare('INSERT OR IGNORE INTO traffic_receipts (node_id, batch_id, uplink_bytes, downlink_bytes) VALUES (?, ?, ?, ?)')
+        .bind(node.id, batch.id, up, down),
+      db.prepare('UPDATE nodes SET used_up_bytes = used_up_bytes + ?, used_down_bytes = used_down_bytes + ? WHERE id = ? AND changes() = 1')
+        .bind(up, down, node.id),
+      db.prepare('UPDATE users SET used_up_bytes = used_up_bytes + ?, used_down_bytes = used_down_bytes + ? WHERE id = ? AND changes() = 1')
+        .bind(up, down, owner.id)
+    );
   }
-  // Receipt and both counters commit in one batch; the changes() chain turns
-  // a concurrent duplicate insert into a no-op for the counters as well.
-  await db.batch([
-    db.prepare('INSERT OR IGNORE INTO traffic_receipts (node_id, batch_id, uplink_bytes, downlink_bytes) VALUES (?, ?, ?, ?)')
-      .bind(node.id, batchId, up, down),
-    db.prepare('UPDATE nodes SET used_up_bytes = used_up_bytes + ?, used_down_bytes = used_down_bytes + ? WHERE id = ? AND changes() = 1')
-      .bind(up, down, node.id),
-    db.prepare('UPDATE users SET used_up_bytes = used_up_bytes + ?, used_down_bytes = used_down_bytes + ? WHERE id = ? AND changes() = 1')
-      .bind(up, down, owner.id)
-  ]);
-  return batchId;
+
+  if (dbStatements.length > 0) {
+    await db.batch(dbStatements);
+  }
+
+  return acceptedIds;
 }
 
 syncRoute.post('/api/v2/node/sync', async (c) => {
@@ -115,7 +149,8 @@ syncRoute.post('/api/v2/node/sync', async (c) => {
   ).run();
 
   const owner = await c.env.DB.prepare('SELECT * FROM users WHERE id = ?').bind(node.owner_id).first<UserRecord>();
-  const acceptedTrafficBatchId = await settleTraffic(c.env.DB, node, owner, body);
+  const acceptedTrafficBatchIds = await settleTraffic(c.env.DB, node, owner, body);
+  const acceptedTrafficBatchId = acceptedTrafficBatchIds[0] || '';
 
   if (node.desired_state !== 'active') {
     return c.json({
@@ -124,6 +159,7 @@ syncRoute.post('/api/v2/node/sync', async (c) => {
       desired_state: node.desired_state === 'revoked' ? 'revoked' : 'disabled',
       config_version: Number(node.desired_config_version) || 1,
       accepted_traffic_batch_id: acceptedTrafficBatchId,
+      accepted_traffic_batch_ids: acceptedTrafficBatchIds,
       reload: false
     });
   }
@@ -160,6 +196,7 @@ syncRoute.post('/api/v2/node/sync', async (c) => {
     config_version: desiredVersion,
     config_hash: configHash,
     accepted_traffic_batch_id: acceptedTrafficBatchId,
+    accepted_traffic_batch_ids: acceptedTrafficBatchIds,
     reload: shouldReload,
     ...(shouldReload ? { config } : {})
   });

@@ -69,6 +69,21 @@ test('traffic retry counts once; replayed or foreign batches are settled without
   assert.equal((await row('SELECT used_up_bytes FROM users WHERE id=2')).used_up_bytes,100);
   assert.equal((await row('SELECT used_up_bytes FROM users WHERE id=3')).used_up_bytes,0);
 });
+test('multiple traffic batches are settled atomically and all IDs returned in accepted_traffic_batch_ids', async () => {
+  const multiPayload = {
+    traffic_batches: [
+      { id: 'batch-m1', deltas: [{ username: 'alice', uplink: 50, downlink: 50 }] },
+      { id: 'batch-m2', deltas: [{ username: 'alice', uplink: 25, downlink: 25 }] },
+      { id: 'batch-m3', deltas: [{ username: 'foreign', uplink: 99, downlink: 99 }] }, // should drop foreign delta safely
+    ]
+  };
+  const res = await sync(multiPayload);
+  assert.equal(res.status, 200);
+  const body = await res.json();
+  assert.deepEqual(body.accepted_traffic_batch_ids, ['batch-m1', 'batch-m2', 'batch-m3']);
+  assert.equal((await row('SELECT used_up_bytes FROM users WHERE id=2')).used_up_bytes, 75);
+  assert.equal((await row('SELECT used_down_bytes FROM nodes WHERE id=1')).used_down_bytes, 75);
+});
 test('an unrelated admin edit does not reload a node whose own config is unchanged', async () => {
   const first=await (await sync()).json();
   const acked=await (await sync({applied_config_hash:first.config_hash})).json();

@@ -111,10 +111,23 @@ func (s *StateStore) Update(fn func(*AgentState) error) error {
 }
 
 func (s *StateStore) AcknowledgeTraffic(batchID string) error {
+	return s.AcknowledgeTrafficBatches([]string{batchID})
+}
+
+func (s *StateStore) AcknowledgeTrafficBatches(batchIDs []string) error {
+	if len(batchIDs) == 0 {
+		return nil
+	}
+	idMap := make(map[string]bool, len(batchIDs))
+	for _, id := range batchIDs {
+		if id != "" {
+			idMap[id] = true
+		}
+	}
 	return s.Update(func(state *AgentState) error {
 		remaining := state.PendingTraffic[:0]
 		for _, batch := range state.PendingTraffic {
-			if batch.ID != batchID {
+			if !idMap[batch.ID] {
 				remaining = append(remaining, batch)
 			}
 		}
