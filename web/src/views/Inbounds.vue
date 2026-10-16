@@ -7,7 +7,7 @@
           <span>协议模板池 (Inbound Templates)</span>
         </h1>
         <p class="text-sm text-slate-400 mt-1">
-          三层解耦架构：协议模板池独立管理，支持 VLESS-Reality 与 Hysteria 2 单协议原子化配置，供各主机按端口插槽自由绑定。
+          三层解耦架构：协议模板池集中定义端口与协议参数，各主机按插槽自由挂载，子节点自动遵从主模板规则。
         </p>
       </div>
       <button
@@ -68,26 +68,40 @@
           v-for="tmpl in filteredTemplates"
           :key="tmpl.id"
           class="rounded-2xl border bg-slate-900/90 p-5 space-y-4 flex flex-col justify-between transition hover:border-slate-700"
-          :class="tmpl.protocol === 'vless' ? 'border-emerald-500/20' : 'border-sky-500/20'"
+          :class="getCardBorderClass(tmpl.protocol)"
         >
           <div class="space-y-3.5">
             <!-- Header Badges -->
             <div class="flex items-start justify-between gap-2">
-              <div class="flex flex-wrap items-center gap-2">
+              <div class="flex flex-wrap items-center gap-1.5">
                 <!-- Protocol Badge -->
                 <span
-                  v-if="tmpl.protocol === 'vless'"
-                  class="px-2.5 py-0.5 rounded-lg text-xs font-bold uppercase tracking-wider bg-emerald-500/15 text-emerald-300 border border-emerald-500/30 flex items-center gap-1.5"
+                  class="px-2.5 py-0.5 rounded-lg text-xs font-bold uppercase tracking-wider border flex items-center gap-1.5"
+                  :class="getProtoBadge(tmpl.protocol).class"
                 >
-                  <span class="w-1.5 h-1.5 rounded-full bg-emerald-400"></span>
-                  VLESS Reality
+                  <span class="w-1.5 h-1.5 rounded-full" :class="getProtoBadge(tmpl.protocol).dot"></span>
+                  {{ getProtoBadge(tmpl.protocol).label }}
                 </span>
+
+                <!-- Port Badge -->
+                <span class="px-2 py-0.5 rounded-lg text-[11px] font-mono font-medium bg-slate-800 text-slate-200 border border-slate-700">
+                  :{{ tmpl.listen_port || 2096 }}
+                </span>
+
+                <!-- Hop Badge -->
                 <span
-                  v-else
-                  class="px-2.5 py-0.5 rounded-lg text-xs font-bold uppercase tracking-wider bg-sky-500/15 text-sky-300 border border-sky-500/30 flex items-center gap-1.5"
+                  v-if="tmpl.hop_ports"
+                  class="px-2 py-0.5 rounded-lg text-[11px] font-mono font-medium bg-sky-500/10 text-sky-300 border border-sky-500/20"
                 >
-                  <span class="w-1.5 h-1.5 rounded-full bg-sky-400"></span>
-                  Hysteria 2
+                  ⇄跳跃: {{ tmpl.hop_ports }}
+                </span>
+
+                <!-- Obfs Badge -->
+                <span
+                  v-if="tmpl.hy2_obfs_password"
+                  class="px-2 py-0.5 rounded-lg text-[11px] font-medium bg-amber-500/15 text-amber-300 border border-amber-500/30"
+                >
+                  🛡 混淆: Salamander
                 </span>
 
                 <!-- Scope Badge -->
@@ -95,13 +109,13 @@
                   v-if="tmpl.owner_id === null"
                   class="px-2 py-0.5 rounded-lg text-[11px] font-medium bg-violet-500/10 text-violet-300 border border-violet-500/20"
                 >
-                  🌐 系统公共
+                  🌐 系统
                 </span>
                 <span
                   v-else
                   class="px-2 py-0.5 rounded-lg text-[11px] font-medium bg-amber-500/10 text-amber-300 border border-amber-500/20"
                 >
-                  🔒 租户私有<span v-if="isAdmin && tmpl.owner_username"> ({{ tmpl.owner_username }})</span>
+                  🔒 私有<span v-if="isAdmin && tmpl.owner_username"> ({{ tmpl.owner_username }})</span>
                 </span>
 
                 <!-- Default Badge -->
@@ -141,8 +155,8 @@
               <p class="text-[11px] text-slate-500 mt-0.5 font-mono">ID: #{{ tmpl.id }} · 更新于 {{ tmpl.updated_at || tmpl.created_at || '最近' }}</p>
             </div>
 
-            <!-- Details Block: VLESS Reality -->
-            <div v-if="tmpl.protocol === 'vless'" class="space-y-2 pt-1 text-xs">
+            <!-- Details Block: VLESS Reality / Trojan Reality -->
+            <div v-if="tmpl.protocol === 'vless' || tmpl.protocol === 'trojan'" class="space-y-2 pt-1 text-xs">
               <div class="grid grid-cols-2 gap-2 p-3 rounded-xl bg-slate-950/60 border border-slate-800/80 font-mono">
                 <div>
                   <span class="text-slate-500 text-[10px] block">SNI 伪装域名</span>
@@ -160,8 +174,8 @@
                   <span class="text-slate-300 font-bold">{{ tmpl.reality_short_id || '0123456789abcdef' }}</span>
                 </div>
                 <div class="flex items-center justify-between gap-2">
-                  <span class="text-slate-500 text-[10px] shrink-0">密钥对:</span>
-                  <span class="text-slate-400 truncate text-[10px]">按租户自动分配</span>
+                  <span class="text-slate-500 text-[10px] shrink-0">Reality 密钥:</span>
+                  <span class="text-slate-400 truncate text-[10px]">按租户自动派发</span>
                 </div>
               </div>
             </div>
@@ -179,13 +193,44 @@
                 </div>
               </div>
 
-              <div class="p-3 rounded-xl bg-slate-950/60 border border-slate-800/80 space-y-1 font-mono text-[11px]">
+              <div class="p-3 rounded-xl bg-slate-950/60 border border-slate-800/80 space-y-1.5 font-mono text-[11px]">
                 <div class="flex items-center justify-between gap-2">
                   <span class="text-slate-500 text-[10px]">伪装回落网址:</span>
                   <span class="text-slate-300 truncate">{{ tmpl.hy2_masquerade || 'https://bing.com' }}</span>
                 </div>
+                <div v-if="tmpl.hy2_obfs_password" class="flex items-center justify-between gap-2 text-amber-300">
+                  <span class="text-slate-500 text-[10px]">混淆密码 (Salamander):</span>
+                  <span class="truncate font-bold">{{ tmpl.hy2_obfs_password }}</span>
+                </div>
                 <div class="text-[10px] text-slate-500">
-                  自签 TLS 证书在主机运行时自动生成；UDP 拥塞控制支持。
+                  自签 TLS 证书支持 SHA-256 指纹锁定 (Cert Pinning)。
+                </div>
+              </div>
+            </div>
+
+            <!-- Details Block: TUIC v5 -->
+            <div v-else-if="tmpl.protocol === 'tuic'" class="space-y-2 pt-1 text-xs">
+              <div class="p-3 rounded-xl bg-slate-950/60 border border-slate-800/80 space-y-1.5 font-mono text-[11px]">
+                <div class="flex items-center justify-between">
+                  <span class="text-slate-500 text-[10px]">拥塞控制算法:</span>
+                  <span class="text-violet-300 uppercase font-bold">{{ tmpl.tuic_congestion_control || 'BBR' }}</span>
+                </div>
+                <div class="flex items-center justify-between">
+                  <span class="text-slate-500 text-[10px]">ALPN 协商:</span>
+                  <span class="text-slate-300">h3</span>
+                </div>
+                <div class="text-[10px] text-slate-500">
+                  TUIC v5 原生支持多用户鉴权与证书指纹绑定。
+                </div>
+              </div>
+            </div>
+
+            <!-- Details Block: AnyTLS -->
+            <div v-else-if="tmpl.protocol === 'anytls'" class="space-y-2 pt-1 text-xs">
+              <div class="p-3 rounded-xl bg-slate-950/60 border border-slate-800/80 space-y-1 font-mono text-[11px]">
+                <div class="text-slate-300 font-semibold">sing-box 1.12+ 原生 AnyTLS 抗指纹探测</div>
+                <div class="text-[10px] text-slate-500">
+                  使用标准自签名证书与自适应填充保护。
                 </div>
               </div>
             </div>
@@ -193,7 +238,7 @@
 
           <!-- Bottom Footer Note -->
           <div class="pt-3 border-t border-slate-800/60 flex items-center justify-between text-[11px] text-slate-500">
-            <span>支持多主机单端口/跳跃端口复用</span>
+            <span>端口由主模板统一管控</span>
             <span class="text-slate-400 font-mono">Slot Ready</span>
           </div>
         </div>
@@ -214,7 +259,7 @@
                 <span>{{ isEditing ? '编辑协议模板' : '新建协议模板' }}</span>
               </h2>
               <p class="text-xs text-slate-400 mt-0.5">
-                {{ isEditing ? '更新模板参数，绑定该模板的主机在重连或心跳后生效' : '创建独立的单协议模板，之后可在主机中绑定为插槽' }}
+                {{ isEditing ? '更新主模板规则，所有绑定该模板的主机自动生效并遵从' : '创建协议模板，定义监听端口与协议参数' }}
               </p>
             </div>
             <button @click="showModal = false" class="text-slate-400 hover:text-white">
@@ -234,7 +279,7 @@
                   type="text"
                   required
                   class="w-full px-4 py-2.5 rounded-xl bg-slate-950 border border-slate-800 text-slate-100 text-sm focus:border-emerald-500 focus:outline-none"
-                  placeholder="例如: 极速 VLESS / 100M-Hy2"
+                  placeholder="例如: 极速 VLESS / Hy2-跳跃"
                 />
               </div>
 
@@ -245,16 +290,52 @@
                 <select
                   v-model="form.protocol"
                   :disabled="isEditing"
+                  @change="onProtocolChange"
                   class="w-full px-4 py-2.5 rounded-xl bg-slate-950 border border-slate-800 text-slate-100 text-sm focus:border-emerald-500 focus:outline-none disabled:opacity-50"
                 >
                   <option value="vless">VLESS + REALITY (TCP)</option>
                   <option value="hysteria2">Hysteria 2 (UDP)</option>
+                  <option value="tuic">TUIC v5 (UDP BBR)</option>
+                  <option value="trojan">Trojan + REALITY (TCP)</option>
+                  <option value="anytls">AnyTLS (TCP)</option>
                 </select>
               </div>
             </div>
 
-            <!-- 2. VLESS REALITY Fields -->
-            <div v-if="form.protocol === 'vless'" class="space-y-4 pt-1">
+            <!-- Port Configuration -->
+            <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div>
+                <label class="block text-xs font-semibold text-slate-300 mb-1.5">
+                  服务监听端口 (Port) <span class="text-rose-400">*</span>
+                </label>
+                <input
+                  v-model.number="form.listen_port"
+                  type="number"
+                  min="1"
+                  max="65535"
+                  required
+                  class="w-full px-4 py-2.5 rounded-xl bg-slate-950 border border-slate-800 text-slate-100 font-mono text-sm focus:border-emerald-500 focus:outline-none"
+                  placeholder="2096"
+                />
+                <p class="text-[11px] text-slate-500 mt-1">主模板端口，所有子主机默认遵从</p>
+              </div>
+
+              <div v-if="form.protocol === 'hysteria2'">
+                <label class="block text-xs font-semibold text-slate-300 mb-1.5">
+                  端口跳跃范围 (可选)
+                </label>
+                <input
+                  v-model="form.hop_ports"
+                  type="text"
+                  class="w-full px-4 py-2.5 rounded-xl bg-slate-950 border border-slate-800 text-slate-100 font-mono text-sm focus:border-sky-500 focus:outline-none"
+                  placeholder="例如: 22200-22300"
+                />
+                <p class="text-[11px] text-slate-500 mt-1">不填则仅单端口；填写则同时生成单口与多口线路</p>
+              </div>
+            </div>
+
+            <!-- 2. VLESS & Trojan REALITY Fields -->
+            <div v-if="form.protocol === 'vless' || form.protocol === 'trojan'" class="space-y-4 pt-1">
               <div class="flex items-center justify-between border-t border-slate-800 pt-3">
                 <span class="text-xs font-semibold text-emerald-400 uppercase tracking-wider">REALITY 伪装目标配置</span>
                 <button
@@ -269,7 +350,7 @@
 
               <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div>
-                  <label class="block text-xs font-semibold text-slate-300 mb-1.5">伪装域名 (Server Name / SNI) *</label>
+                  <label class="block text-xs font-semibold text-slate-300 mb-1.5">伪装域名 (SNI) *</label>
                   <input
                     v-model="form.reality_server_name"
                     type="text"
@@ -292,12 +373,12 @@
 
               <!-- Keys block -->
               <div class="p-3.5 rounded-xl bg-slate-950/80 border border-slate-800 space-y-2 text-xs">
-                <span class="text-slate-400 font-semibold">X25519 密钥与 ShortID</span>
+                <span class="text-slate-400 font-semibold">ShortID 与租户私钥驱动</span>
                 <div class="space-y-1 font-mono text-[11px]">
                   <div class="truncate text-slate-400">
                     <span class="text-slate-500">ShortID:</span> {{ form.reality_short_id || '(保存时自动生成)' }}
                   </div>
-                  <p class="text-slate-500 font-sans">Reality 密钥按租户自动分配：每个租户独立一对，私钥只下发到该租户的主机。</p>
+                  <p class="text-slate-500 font-sans">Reality 密钥严格按租户自动分配：每个租户独立一对，私钥只下发至该租户的主机。</p>
                 </div>
               </div>
             </div>
@@ -305,7 +386,37 @@
             <!-- 3. Hysteria 2 Fields -->
             <div v-else-if="form.protocol === 'hysteria2'" class="space-y-4 pt-1">
               <div class="border-t border-slate-800 pt-3">
-                <span class="text-xs font-semibold text-sky-400 uppercase tracking-wider">Hysteria 2 速率与伪装</span>
+                <span class="text-xs font-semibold text-sky-400 uppercase tracking-wider">Hysteria 2 速率、伪装与混淆</span>
+              </div>
+
+              <!-- Obfs Switch Block -->
+              <div class="p-3.5 rounded-xl bg-slate-950/80 border border-slate-800 space-y-2">
+                <div class="flex items-center justify-between">
+                  <label class="flex items-center space-x-2 text-xs text-sky-300 font-semibold cursor-pointer">
+                    <input
+                      type="checkbox"
+                      v-model="form.hy2_obfs_enabled"
+                      @change="onObfsToggle"
+                      class="rounded bg-slate-900 border-slate-700 text-sky-500 w-4 h-4 focus:ring-0"
+                    />
+                    <span>启用 Salamander 混淆 (对抗运营商 UDP/QUIC 截流)</span>
+                  </label>
+                </div>
+                <div v-if="form.hy2_obfs_enabled" class="space-y-1 font-mono text-[11px] pt-1">
+                  <div class="flex items-center justify-between bg-slate-900 p-2.5 rounded-lg border border-slate-800">
+                    <span class="text-slate-300 truncate">
+                      <span class="text-slate-500">混淆密码:</span> {{ form.hy2_obfs_password }}
+                    </span>
+                    <button
+                      type="button"
+                      @click="copyText(form.hy2_obfs_password)"
+                      class="px-2 py-0.5 rounded text-[11px] font-medium bg-slate-800 hover:bg-slate-700 text-slate-300 transition shrink-0 ml-2"
+                    >
+                      复制密码
+                    </button>
+                  </div>
+                  <p class="text-[10px] text-slate-500 font-sans">系统自动派发 16 字节密钥，客户端订阅将自动注入，无需手动修改。</p>
+                </div>
               </div>
 
               <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
@@ -319,7 +430,7 @@
                     required
                     class="w-full px-4 py-2.5 rounded-xl bg-slate-950 border border-slate-800 text-slate-100 font-mono text-sm focus:border-sky-500 focus:outline-none"
                   />
-                  <p class="text-[11px] text-slate-500 mt-1">对应客户端的下载方向，0 表示不限速</p>
+                  <p class="text-[11px] text-slate-500 mt-1">对应客户端下载，0 表示不限速</p>
                 </div>
                 <div>
                   <label class="block text-xs font-semibold text-slate-300 mb-1.5">服务器下行 (Mbps)</label>
@@ -331,7 +442,7 @@
                     required
                     class="w-full px-4 py-2.5 rounded-xl bg-slate-950 border border-slate-800 text-slate-100 font-mono text-sm focus:border-sky-500 focus:outline-none"
                   />
-                  <p class="text-[11px] text-slate-500 mt-1">对应客户端的上传方向，0 表示不限速</p>
+                  <p class="text-[11px] text-slate-500 mt-1">对应客户端上传，0 表示不限速</p>
                 </div>
               </div>
 
@@ -344,20 +455,47 @@
                   class="w-full px-4 py-2.5 rounded-xl bg-slate-950 border border-slate-800 text-slate-100 font-mono text-sm focus:border-sky-500 focus:outline-none"
                   placeholder="https://bing.com"
                 />
-                <p class="text-[11px] text-slate-500 mt-1">端口直接 HTTP 探测时伪装返回的目标网站</p>
               </div>
             </div>
 
-            <!-- 4. Options -->
+            <!-- 4. TUIC v5 Fields -->
+            <div v-else-if="form.protocol === 'tuic'" class="space-y-4 pt-1">
+              <div class="border-t border-slate-800 pt-3">
+                <span class="text-xs font-semibold text-violet-400 uppercase tracking-wider">TUIC v5 参数配置</span>
+              </div>
+              <div>
+                <label class="block text-xs font-semibold text-slate-300 mb-1.5">拥塞控制算法 (Congestion Control)</label>
+                <select
+                  v-model="form.tuic_congestion_control"
+                  class="w-full px-4 py-2.5 rounded-xl bg-slate-950 border border-slate-800 text-slate-100 text-sm focus:border-violet-500 focus:outline-none"
+                >
+                  <option value="bbr">BBR (推荐，弱网高吞吐)</option>
+                  <option value="cubic">CUBIC</option>
+                </select>
+                <p class="text-[11px] text-slate-500 mt-1">使用自签名证书并在订阅中自动锁定 SHA-256 证书指纹 (Cert Pinning)。</p>
+              </div>
+            </div>
+
+            <!-- 5. AnyTLS Fields -->
+            <div v-else-if="form.protocol === 'anytls'" class="space-y-4 pt-1">
+              <div class="border-t border-slate-800 pt-3">
+                <span class="text-xs font-semibold text-rose-400 uppercase tracking-wider">AnyTLS 特性</span>
+              </div>
+              <div class="p-3.5 rounded-xl bg-slate-950/80 border border-slate-800 text-xs text-slate-400">
+                sing-box 1.12+ 原生 AnyTLS 协议，具备 TLS 1.3 拟合与防主动探测能力。
+              </div>
+            </div>
+
+            <!-- 6. Options -->
             <div class="pt-2 border-t border-slate-800 space-y-2">
               <label class="flex items-center space-x-2 text-xs text-slate-300 cursor-pointer">
                 <input type="checkbox" v-model="form.is_default" class="rounded bg-slate-950 border-slate-800 text-emerald-500 focus:ring-0 w-4 h-4" />
-                <span>设为该协议的默认模板 (新建主机时自动绑定默认模板)</span>
+                <span>设为该协议的默认模板 (新建主机时自动挂载)</span>
               </label>
 
               <label v-if="isAdmin && !isEditing" class="flex items-center space-x-2 text-xs text-violet-300 cursor-pointer">
                 <input type="checkbox" v-model="form.is_system" class="rounded bg-slate-950 border-slate-800 text-violet-500 focus:ring-0 w-4 h-4" />
-                <span>设为系统公共模板 (全局可用，所有租户均可在其主机中挂载使用)</span>
+                <span>设为系统公共模板 (全局可用，所有租户均可使用)</span>
               </label>
             </div>
 
@@ -471,7 +609,7 @@
 
 <script setup>
 import { ref, computed, onMounted } from 'vue'
-import { Search, Globe, ShieldCheck, Zap, X, Plus, Trash2, Sliders } from 'lucide-vue-next'
+import { Search, Globe, X, Plus, Trash2, Sliders } from 'lucide-vue-next'
 import { request, getUser } from '../api'
 import PageSkeleton from '../components/PageSkeleton.vue'
 import { usePageRead } from '../composables/usePageRead'
@@ -489,8 +627,11 @@ const saveError = ref('')
 const activeFilter = ref('all')
 const filterTabs = [
   { id: 'all', label: '全部' },
-  { id: 'vless', label: 'VLESS Reality' },
+  { id: 'vless', label: 'VLESS' },
   { id: 'hysteria2', label: 'Hysteria 2' },
+  { id: 'tuic', label: 'TUIC v5' },
+  { id: 'trojan', label: 'Trojan' },
+  { id: 'anytls', label: 'AnyTLS' },
   { id: 'system', label: '系统公共' },
   { id: 'private', label: '租户私有' }
 ]
@@ -499,20 +640,48 @@ const showModal = ref(false)
 const isEditing = ref(false)
 const editingId = ref(null)
 
+const defaultPort = (proto) => {
+  switch (proto) {
+    case 'vless': return 2096
+    case 'hysteria2': return 2096
+    case 'tuic': return 8443
+    case 'trojan': return 443
+    case 'anytls': return 10443
+    default: return 2096
+  }
+}
+
 const defaultForm = () => ({
   name: '',
   protocol: 'vless',
+  listen_port: 2096,
+  hop_ports: '',
   reality_server_name: 'www.amazon.com',
   reality_dest: 'www.amazon.com:443',
   reality_short_id: '',
   hy2_up_mbps: 100,
   hy2_down_mbps: 100,
   hy2_masquerade: 'https://bing.com',
+  hy2_obfs_enabled: false,
+  hy2_obfs_password: '',
+  tuic_congestion_control: 'bbr',
   is_default: false,
   is_system: false
 })
 
 const form = ref(defaultForm())
+
+function onProtocolChange() {
+  form.value.listen_port = defaultPort(form.value.protocol)
+}
+
+function onObfsToggle() {
+  if (form.value.hy2_obfs_enabled && !form.value.hy2_obfs_password) {
+    const arr = new Uint8Array(16)
+    crypto.getRandomValues(arr)
+    form.value.hy2_obfs_password = Array.from(arr).map(b => b.toString(16).padStart(2, '0')).join('')
+  }
+}
 
 const showSniModal = ref(false)
 const sniSearch = ref('')
@@ -540,6 +709,9 @@ const filteredPresets = computed(() => {
 const filteredTemplates = computed(() => {
   if (activeFilter.value === 'vless') return templates.value.filter(t => t.protocol === 'vless')
   if (activeFilter.value === 'hysteria2') return templates.value.filter(t => t.protocol === 'hysteria2')
+  if (activeFilter.value === 'tuic') return templates.value.filter(t => t.protocol === 'tuic')
+  if (activeFilter.value === 'trojan') return templates.value.filter(t => t.protocol === 'trojan')
+  if (activeFilter.value === 'anytls') return templates.value.filter(t => t.protocol === 'anytls')
   if (activeFilter.value === 'system') return templates.value.filter(t => t.owner_id === null)
   if (activeFilter.value === 'private') return templates.value.filter(t => t.owner_id !== null)
   return templates.value
@@ -548,9 +720,34 @@ const filteredTemplates = computed(() => {
 function getFilteredCount(tabId) {
   if (tabId === 'vless') return templates.value.filter(t => t.protocol === 'vless').length
   if (tabId === 'hysteria2') return templates.value.filter(t => t.protocol === 'hysteria2').length
+  if (tabId === 'tuic') return templates.value.filter(t => t.protocol === 'tuic').length
+  if (tabId === 'trojan') return templates.value.filter(t => t.protocol === 'trojan').length
+  if (tabId === 'anytls') return templates.value.filter(t => t.protocol === 'anytls').length
   if (tabId === 'system') return templates.value.filter(t => t.owner_id === null).length
   if (tabId === 'private') return templates.value.filter(t => t.owner_id !== null).length
   return templates.value.length
+}
+
+function getCardBorderClass(proto) {
+  switch (proto) {
+    case 'vless': return 'border-emerald-500/20'
+    case 'hysteria2': return 'border-sky-500/20'
+    case 'tuic': return 'border-violet-500/20'
+    case 'trojan': return 'border-amber-500/20'
+    case 'anytls': return 'border-rose-500/20'
+    default: return 'border-slate-800'
+  }
+}
+
+function getProtoBadge(proto) {
+  switch (proto) {
+    case 'vless': return { label: 'VLESS Reality', class: 'bg-emerald-500/15 text-emerald-300 border-emerald-500/30', dot: 'bg-emerald-400' }
+    case 'hysteria2': return { label: 'Hysteria 2', class: 'bg-sky-500/15 text-sky-300 border-sky-500/30', dot: 'bg-sky-400' }
+    case 'tuic': return { label: 'TUIC v5', class: 'bg-violet-500/15 text-violet-300 border-violet-500/30', dot: 'bg-violet-400' }
+    case 'trojan': return { label: 'Trojan Reality', class: 'bg-amber-500/15 text-amber-300 border-amber-500/30', dot: 'bg-amber-400' }
+    case 'anytls': return { label: 'AnyTLS', class: 'bg-rose-500/15 text-rose-300 border-rose-500/30', dot: 'bg-rose-400' }
+    default: return { label: proto, class: 'bg-slate-500/15 text-slate-300 border-slate-500/30', dot: 'bg-slate-400' }
+  }
 }
 
 function canEdit(tmpl) {
@@ -585,12 +782,17 @@ function openEditModal(tmpl) {
   form.value = {
     name: tmpl.name,
     protocol: tmpl.protocol,
+    listen_port: tmpl.listen_port || defaultPort(tmpl.protocol),
+    hop_ports: tmpl.hop_ports || '',
     reality_server_name: tmpl.reality_server_name || 'www.amazon.com',
     reality_dest: tmpl.reality_dest || 'www.amazon.com:443',
     reality_short_id: tmpl.reality_short_id || '',
     hy2_up_mbps: tmpl.hy2_up_mbps || 100,
     hy2_down_mbps: tmpl.hy2_down_mbps || 100,
     hy2_masquerade: tmpl.hy2_masquerade || 'https://bing.com',
+    hy2_obfs_enabled: !!tmpl.hy2_obfs_password,
+    hy2_obfs_password: tmpl.hy2_obfs_password || '',
+    tuic_congestion_control: tmpl.tuic_congestion_control || 'bbr',
     is_default: !!tmpl.is_default,
     is_system: tmpl.owner_id === null
   }
@@ -605,18 +807,24 @@ async function saveTemplate() {
     const payload = {
       name: form.value.name.trim(),
       protocol: form.value.protocol,
+      listen_port: form.value.listen_port,
       is_default: form.value.is_default ? 1 : 0,
       is_system: form.value.is_system
     }
 
-    if (form.value.protocol === 'vless') {
+    if (form.value.protocol === 'vless' || form.value.protocol === 'trojan') {
       payload.reality_server_name = form.value.reality_server_name.trim()
       payload.reality_dest = form.value.reality_dest.trim()
       payload.reality_short_id = form.value.reality_short_id
     } else if (form.value.protocol === 'hysteria2') {
+      payload.hop_ports = form.value.hop_ports.trim()
       payload.hy2_up_mbps = form.value.hy2_up_mbps
       payload.hy2_down_mbps = form.value.hy2_down_mbps
       payload.hy2_masquerade = form.value.hy2_masquerade.trim()
+      payload.hy2_obfs_enabled = form.value.hy2_obfs_enabled
+      payload.hy2_obfs_password = form.value.hy2_obfs_password.trim()
+    } else if (form.value.protocol === 'tuic') {
+      payload.tuic_congestion_control = form.value.tuic_congestion_control
     }
 
     if (isEditing.value && editingId.value) {
@@ -641,7 +849,7 @@ async function saveTemplate() {
 }
 
 async function deleteTemplate(tmpl) {
-  if (!confirm(`确定要删除协议模板 "${tmpl.name}" 吗？如果已有主机插槽绑定，需先解除绑定。`)) return
+  if (!confirm(`确定要删除协议模板 "${tmpl.name}" 吗？如果已有主机挂载，需先解除挂载。`)) return
   try {
     await request(`/api/v1/templates/${tmpl.id}`, { method: 'DELETE' })
     await loadTemplates()
@@ -659,6 +867,12 @@ function applyPresetAndClose(preset) {
   form.value.reality_server_name = preset.sni
   form.value.reality_dest = preset.dest
   showSniModal.value = false
+}
+
+function copyText(txt) {
+  if (navigator.clipboard) {
+    navigator.clipboard.writeText(txt)
+  }
 }
 
 onMounted(() => {

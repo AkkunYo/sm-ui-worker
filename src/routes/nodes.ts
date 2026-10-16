@@ -7,43 +7,41 @@ import type { AppBindings, AppVariables, JwtUser } from '../types';
 
 export const nodesRoute = new Hono<{ Bindings: AppBindings; Variables: AppVariables }>();
 
-function normalizeSlots(raw: unknown, fallbackPort: number, fallbackHopPorts: string): RequestedNodeSlot[] | null | undefined {
+function normalizeSlots(raw: unknown): RequestedNodeSlot[] | null | undefined {
   if (!Array.isArray(raw)) return null;
   const slots: RequestedNodeSlot[] = [];
-  for (const slot of raw) {
-    const templateId = Number.parseInt(String(slot?.template_id || ''), 10);
+  for (const item of raw) {
+    const templateId = typeof item === 'number'
+      ? item
+      : Number.parseInt(String(item?.template_id || ''), 10);
     if (!Number.isInteger(templateId) || templateId <= 0) return undefined;
-    const listenPort = Number.parseInt(String(slot?.listen_port || ''), 10) || fallbackPort;
-    if (listenPort < 1 || listenPort > 65535) return undefined;
+    const enabled = (typeof item === 'object' && item !== null && item.enabled !== undefined)
+      ? (item.enabled ? 1 : 0) : 1;
     slots.push({
       template_id: templateId,
-      listen_port: listenPort,
-      hop_ports: typeof slot?.hop_ports === 'string' ? slot.hop_ports.trim() : fallbackHopPorts,
-      enabled: slot?.enabled === undefined ? 1 : (slot.enabled ? 1 : 0)
+      enabled
     });
   }
-  const keys = slots.map(slot => `${slot.template_id}:${slot.listen_port}`);
-  if (new Set(keys).size !== keys.length) return undefined;
+  const ids = slots.map(slot => slot.template_id);
+  if (new Set(ids).size !== ids.length) return undefined;
   return slots;
 }
 
 async function existingSlots(db: D1Database, nodeId: number): Promise<RequestedNodeSlot[]> {
-  const rows = (await db.prepare('SELECT template_id, listen_port, hop_ports, enabled FROM node_inbounds WHERE node_id = ? ORDER BY id ASC').bind(nodeId).all<RequestedNodeSlot>()).results;
+  const rows = (await db.prepare('SELECT template_id, enabled FROM node_inbounds WHERE node_id = ? ORDER BY id ASC').bind(nodeId).all<RequestedNodeSlot>()).results;
   return rows.map(row => ({
     template_id: Number(row.template_id),
-    listen_port: Number(row.listen_port),
-    hop_ports: row.hop_ports || '',
     enabled: row.enabled === undefined ? 1 : Number(row.enabled)
   }));
 }
 
 function insertSlotStatements(db: D1Database, nodeId: number | 'last_insert_rowid()', slots: RequestedNodeSlot[]): D1PreparedStatement[] {
   return slots.map(slot => db.prepare(`
-    INSERT INTO node_inbounds (node_id, template_id, listen_port, hop_ports, enabled)
-    VALUES (${nodeId === 'last_insert_rowid()' ? 'last_insert_rowid()' : '?'}, ?, ?, ?, ?)
+    INSERT INTO node_inbounds (node_id, template_id, enabled)
+    VALUES (${nodeId === 'last_insert_rowid()' ? 'last_insert_rowid()' : '?'}, ?, ?)
   `).bind(...(nodeId === 'last_insert_rowid()'
-    ? [slot.template_id, slot.listen_port, slot.hop_ports, slot.enabled]
-    : [nodeId, slot.template_id, slot.listen_port, slot.hop_ports, slot.enabled])));
+    ? [slot.template_id, slot.enabled]
+    : [nodeId, slot.template_id, slot.enabled])));
 }
 
 nodesRoute.get('/api/v1/nodes', authMiddleware, async (c) => {
@@ -94,21 +92,17 @@ nodesRoute.post('/api/v1/nodes', authMiddleware, async (c) => {
   const ownerId = currentUser.role === 'admin' && body.owner_id ? Number.parseInt(body.owner_id, 10) : currentUser.userId;
   if (!Number.isInteger(ownerId) || ownerId <= 0) return c.json({ error: '所属租户无效' }, 400);
   const serverIp = typeof body.server_ip === 'string' ? body.server_ip.trim() : '';
-  const proxyPort = Number.parseInt(body.proxy_port, 10) || 2096;
-  const hopPorts = typeof body.hop_ports === 'string' ? body.hop_ports.trim() : '';
   const token = generateToken(32);
 
   let slots: RequestedNodeSlot[];
   if (Array.isArray(body.inbounds)) {
-    const normalized = normalizeSlots(body.inbounds, proxyPort, hopPorts);
+    const normalized = normalizeSlots(body.inbounds);
     if (!normalized) return c.json({ error: '节点插槽参数无效' }, 400);
     slots = normalized;
   } else {
-    const defaults = (await c.env.DB.prepare(`SELECT id, protocol FROM inbound_templates WHERE owner_id IS NULL AND is_default = 1 ORDER BY id ASC`).all<{ id: number; protocol: string }>()).results;
+    const defaults = (await c.env.DB.prepare(`SELECT id FROM inbound_templates WHERE owner_id IS NULL AND is_default = 1 ORDER BY id ASC`).all<{ id: number }>()).results;
     slots = defaults.map(template => ({
       template_id: template.id,
-      listen_port: template.protocol === 'vless' ? proxyPort : 2096,
-      hop_ports: template.protocol === 'hysteria2' ? hopPorts : '',
       enabled: 1
     }));
   }
@@ -116,9 +110,9 @@ nodesRoute.post('/api/v1/nodes', authMiddleware, async (c) => {
   if (!validation.ok) return c.json({ error: validation.error }, 400);
 
   const result = await c.env.DB.prepare(`
-    INSERT INTO nodes (owner_id, name, server_ip, proxy_port, hop_ports, token, status, desired_state, address_locked)
-    VALUES (?, ?, ?, ?, ?, ?, 'offline', 'active', ?)
-  `).bind(ownerId, name, serverIp, proxyPort, hopPorts, token, serverIp ? 1 : 0).run();
+    INSERT INTO nodes (owner_id, name, server_ip, token, status, desired_state, address_locked)
+    VALUES (?, ?, ?, ?, 'offline', 'active', ?)
+  `).bind(ownerId, name, serverIp, token, serverIp ? 1 : 0).run();
   const nodeId = result.meta.last_row_id;
   try {
     await c.env.DB.batch(insertSlotStatements(c.env.DB, nodeId as number, validation.slots));
@@ -127,7 +121,7 @@ nodesRoute.post('/api/v1/nodes', authMiddleware, async (c) => {
     throw error;
   }
 
-  return c.json({ id: nodeId, name, token, server_ip: serverIp, proxy_port: proxyPort, hop_ports: hopPorts, status: 'offline', owner_id: ownerId });
+  return c.json({ id: nodeId, name, token, server_ip: serverIp, status: 'offline', owner_id: ownerId });
 });
 
 nodesRoute.put('/api/v1/nodes/:id', authMiddleware, async (c) => {
@@ -142,14 +136,12 @@ nodesRoute.put('/api/v1/nodes/:id', authMiddleware, async (c) => {
   const ownerId = currentUser.role === 'admin' && body.owner_id ? Number.parseInt(body.owner_id, 10) : node.owner_id;
   const name = typeof body.name === 'string' && body.name.trim() ? body.name.trim() : node.name;
   const serverIp = body.server_ip !== undefined ? String(body.server_ip).trim() : node.server_ip;
-  const proxyPort = body.proxy_port !== undefined ? Number.parseInt(body.proxy_port, 10) : node.proxy_port;
-  const hopPorts = body.hop_ports !== undefined ? String(body.hop_ports).trim() : (node.hop_ports || '');
   const status = body.status ? String(body.status).toLowerCase() : node.status;
   if (!['offline', 'online', 'disabled'].includes(status)) return c.json({ error: '节点状态无效' }, 400);
 
   let slots: RequestedNodeSlot[];
   if (Array.isArray(body.inbounds)) {
-    const normalized = normalizeSlots(body.inbounds, proxyPort, hopPorts);
+    const normalized = normalizeSlots(body.inbounds);
     if (!normalized) return c.json({ error: '节点插槽参数无效' }, 400);
     slots = normalized;
   } else {
@@ -160,11 +152,11 @@ nodesRoute.put('/api/v1/nodes/:id', authMiddleware, async (c) => {
 
   const desiredState = status === 'disabled' ? 'disabled' : 'active';
   const statements: D1PreparedStatement[] = [c.env.DB.prepare(`
-    UPDATE nodes SET owner_id = ?, name = ?, server_ip = ?, proxy_port = ?, hop_ports = ?, status = ?,
+    UPDATE nodes SET owner_id = ?, name = ?, server_ip = ?, status = ?,
       desired_state = ?, revoked_at = CASE WHEN ? = 'disabled' THEN COALESCE(revoked_at, datetime('now')) ELSE NULL END,
       desired_config_hash = '', address_locked = CASE WHEN TRIM(?) <> '' THEN 1 ELSE address_locked END,
       updated_at = datetime('now') WHERE id = ?
-  `).bind(ownerId, name, serverIp, proxyPort, hopPorts, status, desiredState, status, serverIp, id)];
+  `).bind(ownerId, name, serverIp, status, desiredState, status, serverIp, id)];
   statements.push(c.env.DB.prepare('DELETE FROM node_inbounds WHERE node_id = ?').bind(id));
   statements.push(...insertSlotStatements(c.env.DB, id, validation.slots));
   await c.env.DB.batch(statements);

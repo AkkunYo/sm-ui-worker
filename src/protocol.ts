@@ -2,13 +2,17 @@ export interface InboundTemplateRecord {
   id: number;
   owner_id?: number | null;
   name: string;
-  protocol: 'vless' | 'hysteria2';
+  protocol: 'vless' | 'hysteria2' | 'tuic' | 'trojan' | 'anytls';
+  listen_port?: number;
+  hop_ports?: string | null;
   reality_dest?: string | null;
   reality_server_name?: string | null;
   reality_short_id?: string | null;
   hy2_up_mbps?: number | null;
   hy2_down_mbps?: number | null;
   hy2_masquerade?: string | null;
+  hy2_obfs_password?: string | null;
+  tuic_congestion_control?: string | null;
   is_default?: number;
   created_at?: string;
   updated_at?: string;
@@ -23,7 +27,7 @@ export interface NodeInboundSlot {
   hop_ports?: string | null;
   enabled?: number;
   template_name?: string;
-  protocol: 'vless' | 'hysteria2';
+  protocol: 'vless' | 'hysteria2' | 'tuic' | 'trojan' | 'anytls';
   reality_dest?: string | null;
   reality_server_name?: string | null;
   reality_private_key?: string | null;
@@ -32,6 +36,8 @@ export interface NodeInboundSlot {
   hy2_up_mbps?: number | null;
   hy2_down_mbps?: number | null;
   hy2_masquerade?: string | null;
+  hy2_obfs_password?: string | null;
+  tuic_congestion_control?: string | null;
 }
 
 export interface NodeRecord {
@@ -42,12 +48,11 @@ export interface NodeRecord {
   owner_proxy_password?: string;
   name: string;
   server_ip: string;
-  proxy_port?: number;
-  hop_ports?: string | null;
   token: string;
   status: string;
   core_version?: string;
   agent_version?: string;
+  cert_sha256?: string;
   used_up_bytes?: number;
   used_down_bytes?: number;
   inbounds?: NodeInboundSlot[];
@@ -138,7 +143,7 @@ export function buildServerConfig(
         }
       });
     } else if (slot.protocol === 'hysteria2') {
-      inbounds.push({
+      const hy2Inbound: any = {
         type: 'hysteria2',
         tag,
         listen: '::',
@@ -148,6 +153,82 @@ export function buildServerConfig(
         down_mbps: slot.hy2_down_mbps || 100,
         ignore_client_bandwidth: false,
         masquerade: slot.hy2_masquerade || 'https://bing.com',
+        tls: {
+          enabled: true,
+          certificate_path: `${baseDir}/certs/selfsigned.crt`,
+          key_path: `${baseDir}/certs/selfsigned.key`
+        }
+      };
+      if (slot.hy2_obfs_password) {
+        hy2Inbound.obfs = {
+          type: 'salamander',
+          password: slot.hy2_obfs_password
+        };
+      }
+      inbounds.push(hy2Inbound);
+    } else if (slot.protocol === 'tuic') {
+      inbounds.push({
+        type: 'tuic',
+        tag,
+        listen: '::',
+        listen_port: slot.listen_port,
+        users: activeUsers.map(u => ({
+          uuid: u.uuid,
+          password: u.proxy_password || u.password || 'sm-ui-password',
+          name: u.username
+        })),
+        congestion_control: slot.tuic_congestion_control || 'bbr',
+        tls: {
+          enabled: true,
+          alpn: ['h3'],
+          certificate_path: `${baseDir}/certs/selfsigned.crt`,
+          key_path: `${baseDir}/certs/selfsigned.key`
+        }
+      });
+    } else if (slot.protocol === 'trojan') {
+      const serverName = slot.reality_server_name || 'www.amazon.com';
+      let destServer = serverName;
+      let destPort = 443;
+      if (slot.reality_dest && slot.reality_dest.includes(':')) {
+        const parts = slot.reality_dest.split(':');
+        destServer = parts[0];
+        destPort = parseInt(parts[1], 10) || 443;
+      }
+      const shortIDs = slot.reality_short_id ? [slot.reality_short_id] : ['0123456789abcdef'];
+
+      inbounds.push({
+        type: 'trojan',
+        tag,
+        listen: '::',
+        listen_port: slot.listen_port,
+        users: activeUsers.map(u => ({
+          password: u.proxy_password || u.password || 'sm-ui-password',
+          name: u.username
+        })),
+        tls: {
+          enabled: true,
+          server_name: serverName,
+          reality: {
+            enabled: true,
+            handshake: {
+              server: destServer,
+              server_port: destPort
+            },
+            private_key: slot.reality_private_key || '',
+            short_id: shortIDs
+          }
+        }
+      });
+    } else if (slot.protocol === 'anytls') {
+      inbounds.push({
+        type: 'anytls',
+        tag,
+        listen: '::',
+        listen_port: slot.listen_port,
+        users: activeUsers.map(u => ({
+          name: u.username,
+          password: u.proxy_password || u.password || 'sm-ui-password'
+        })),
         tls: {
           enabled: true,
           certificate_path: `${baseDir}/certs/selfsigned.crt`,
@@ -197,22 +278,25 @@ export function buildServerConfig(
 
 export interface ResolvedEndpoint {
   name: string;
-  protocol: 'vless' | 'hysteria2';
+  protocol: 'vless' | 'hysteria2' | 'tuic' | 'trojan' | 'anytls';
   server: string;
   port: number;
   hopPorts?: string;
   isHop?: boolean;
-  // VLESS Reality 字段
+  certSha256?: string;
+  // VLESS & Trojan Reality 字段
   uuid?: string;
   flow?: string;
   realityServerName?: string;
   realityPublicKey?: string;
   realityShortId?: string;
-  // Hysteria 2 字段
+  // Hysteria 2 / TUIC / Trojan / AnyTLS 字段
   password?: string;
   sni?: string;
   upMbps?: number;
   downMbps?: number;
+  hy2ObfsPassword?: string;
+  tuicCongestionControl?: string;
 }
 
 /**
@@ -250,7 +334,6 @@ export function resolveNodeEndpoints(
         realityShortId: slot.reality_short_id || '0123456789abcdef'
       });
     } else if (slot.protocol === 'hysteria2') {
-      // 统一从 masquerade 解析出干净的 hostname 作为 SNI，fallback 到 reality_server_name 或 IP
       let hy2Sni = slot.reality_server_name || targetIP;
       if (slot.hy2_masquerade) {
         try {
@@ -262,8 +345,9 @@ export function resolveNodeEndpoints(
       const upMbps = slot.hy2_up_mbps || 100;
       const downMbps = slot.hy2_down_mbps || 100;
       const password = credentials.proxyPassword || 'sm-ui-password';
+      const obfsTag = slot.hy2_obfs_password ? '-Obfs' : '';
 
-      const name = `${node.name}-Hy2-${targetIP}${portSuffix}${tenantSuffix}`;
+      const name = `${node.name}-Hy2${obfsTag}-${targetIP}${portSuffix}${tenantSuffix}`;
       endpoints.push({
         name,
         protocol: 'hysteria2',
@@ -272,13 +356,15 @@ export function resolveNodeEndpoints(
         password,
         sni: hy2Sni,
         upMbps,
-        downMbps
+        downMbps,
+        hy2ObfsPassword: slot.hy2_obfs_password || '',
+        certSha256: node.cert_sha256 || ''
       });
 
       // Hysteria 2 端口跳跃端点扩展
       if (slot.hop_ports && slot.hop_ports.trim()) {
         const hopPortRange = slot.hop_ports.trim();
-        const hopName = `${node.name}-Hy2-Hop-${targetIP}${tenantSuffix}`;
+        const hopName = `${node.name}-Hy2-Hop${obfsTag}-${targetIP}${tenantSuffix}`;
         endpoints.push({
           name: hopName,
           protocol: 'hysteria2',
@@ -289,9 +375,50 @@ export function resolveNodeEndpoints(
           password,
           sni: hy2Sni,
           upMbps,
-          downMbps
+          downMbps,
+          hy2ObfsPassword: slot.hy2_obfs_password || '',
+          certSha256: node.cert_sha256 || ''
         });
       }
+    } else if (slot.protocol === 'tuic') {
+      const password = credentials.proxyPassword || 'sm-ui-password';
+      const name = `${node.name}-TUIC-${targetIP}${portSuffix}${tenantSuffix}`;
+      endpoints.push({
+        name,
+        protocol: 'tuic',
+        server: targetIP,
+        port: slot.listen_port,
+        uuid: credentials.uuid,
+        password,
+        sni: slot.reality_server_name || targetIP,
+        tuicCongestionControl: slot.tuic_congestion_control || 'bbr',
+        certSha256: node.cert_sha256 || ''
+      });
+    } else if (slot.protocol === 'trojan') {
+      const password = credentials.proxyPassword || 'sm-ui-password';
+      const name = `${node.name}-Trojan-${targetIP}${portSuffix}${tenantSuffix}`;
+      endpoints.push({
+        name,
+        protocol: 'trojan',
+        server: targetIP,
+        port: slot.listen_port,
+        password,
+        realityServerName: slot.reality_server_name || 'www.amazon.com',
+        realityPublicKey: slot.reality_public_key || '',
+        realityShortId: slot.reality_short_id || '0123456789abcdef'
+      });
+    } else if (slot.protocol === 'anytls') {
+      const password = credentials.proxyPassword || 'sm-ui-password';
+      const name = `${node.name}-AnyTLS-${targetIP}${portSuffix}${tenantSuffix}`;
+      endpoints.push({
+        name,
+        protocol: 'anytls',
+        server: targetIP,
+        port: slot.listen_port,
+        password,
+        sni: slot.reality_server_name || targetIP,
+        certSha256: node.cert_sha256 || ''
+      });
     }
   }
 

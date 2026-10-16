@@ -1,7 +1,5 @@
 export interface RequestedNodeSlot {
   template_id: number;
-  listen_port: number;
-  hop_ports: string;
   enabled: number;
 }
 

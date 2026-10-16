@@ -31,8 +31,6 @@ CREATE TABLE IF NOT EXISTS nodes (
   owner_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
   name TEXT NOT NULL,
   server_ip TEXT NOT NULL DEFAULT '',
-  proxy_port INTEGER DEFAULT 443,
-  hop_ports TEXT DEFAULT '',
   token TEXT UNIQUE NOT NULL,
   status TEXT DEFAULT 'offline',
   last_heartbeat_at TEXT,
@@ -52,6 +50,7 @@ CREATE TABLE IF NOT EXISTS nodes (
   applied_config_hash TEXT DEFAULT '',
   last_apply_error TEXT DEFAULT '',
   address_locked INTEGER DEFAULT 0,
+  cert_sha256 TEXT DEFAULT '',
   created_at TEXT DEFAULT (datetime('now')),
   updated_at TEXT DEFAULT (datetime('now')),
   UNIQUE(owner_id, name)
@@ -61,13 +60,17 @@ CREATE TABLE IF NOT EXISTS inbound_templates (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   owner_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
   name TEXT NOT NULL,
-  protocol TEXT NOT NULL, -- 'vless' | 'hysteria2'
+  protocol TEXT NOT NULL, -- 'vless' | 'hysteria2' | 'tuic' | 'trojan' | 'anytls'
+  listen_port INTEGER NOT NULL DEFAULT 2096,
+  hop_ports TEXT DEFAULT '',
   reality_dest TEXT,
   reality_server_name TEXT,
   reality_short_id TEXT,
   hy2_up_mbps INTEGER DEFAULT 100,
   hy2_down_mbps INTEGER DEFAULT 100,
   hy2_masquerade TEXT DEFAULT 'https://bing.com',
+  hy2_obfs_password TEXT DEFAULT '',
+  tuic_congestion_control TEXT DEFAULT 'bbr',
   is_default INTEGER DEFAULT 0,
   created_at TEXT DEFAULT (datetime('now')),
   updated_at TEXT DEFAULT (datetime('now'))
@@ -76,13 +79,11 @@ CREATE TABLE IF NOT EXISTS inbound_templates (
 CREATE TABLE IF NOT EXISTS node_inbounds (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   node_id INTEGER NOT NULL REFERENCES nodes(id) ON DELETE CASCADE,
-  template_id INTEGER NOT NULL REFERENCES inbound_templates(id) ON DELETE RESTRICT,
-  listen_port INTEGER NOT NULL DEFAULT 2096,
-  hop_ports TEXT DEFAULT '',
+  template_id INTEGER NOT NULL REFERENCES inbound_templates(id) ON DELETE CASCADE,
   enabled INTEGER DEFAULT 1,
   created_at TEXT DEFAULT (datetime('now')),
   updated_at TEXT DEFAULT (datetime('now')),
-  UNIQUE(node_id, template_id, listen_port)
+  UNIQUE(node_id, template_id)
 );
 
 CREATE INDEX IF NOT EXISTS idx_node_inbounds_template_id ON node_inbounds(template_id);

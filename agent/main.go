@@ -12,6 +12,7 @@ import (
 	"crypto/sha256"
 	"crypto/x509"
 	"crypto/x509/pkix"
+	"encoding/hex"
 	"encoding/json"
 	"encoding/pem"
 	"flag"
@@ -57,6 +58,7 @@ type SyncRequest struct {
 	AppliedConfigVersion int            `json:"applied_config_version"`
 	AppliedConfigHash    string         `json:"applied_config_hash,omitempty"`
 	ApplyError           string         `json:"apply_error,omitempty"`
+	CertSHA256           string         `json:"cert_sha256,omitempty"`
 	TrafficBatchID       string         `json:"traffic_batch_id,omitempty"`
 	TrafficDeltas        []TrafficDelta `json:"traffic_deltas,omitempty"`
 	TrafficBatches       []TrafficBatch `json:"traffic_batches,omitempty"`
@@ -313,6 +315,7 @@ func syncWithMaster(cfg Config, currentVer int, stateStore *StateStore) int {
 		AppliedConfigVersion: state.AppliedConfigVersion,
 		AppliedConfigHash:    state.AppliedConfigHash,
 		ApplyError:           state.LastApplyError,
+		CertSHA256:           getCertSHA256(filepath.Join(cfg.BaseDir, "certs", "selfsigned.crt")),
 		TrafficBatchID:       batchID,
 		TrafficDeltas:        trafficDeltas,
 		TrafficBatches:       trafficBatches,
@@ -586,6 +589,19 @@ func ensureSelfSignedCert(certPath, keyPath string) {
 			keyOut.Close()
 		}
 	}
+}
+
+func getCertSHA256(certPath string) string {
+	data, err := os.ReadFile(certPath)
+	if err != nil {
+		return ""
+	}
+	block, _ := pem.Decode(data)
+	if block == nil || len(block.Bytes) == 0 {
+		return ""
+	}
+	hash := sha256.Sum256(block.Bytes)
+	return hex.EncodeToString(hash[:])
 }
 
 func measureRTT(masterURL string) int64 {

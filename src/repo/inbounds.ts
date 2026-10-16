@@ -1,10 +1,10 @@
 import type { NodeInboundSlot } from '../protocol';
 import { ensureTenantRealityKeys } from '../lib/tenant-keys';
 
-/** VLESS rows whose owning tenant has no Reality key pair yet. */
+/** Reality rows (VLESS/Trojan) whose owning tenant has no Reality key pair yet. */
 function ownersMissingKeys(slots: NodeInboundSlot[]): number[] {
   return slots
-    .filter(slot => slot.protocol === 'vless' && !slot.reality_public_key && slot.owner_id)
+    .filter(slot => (slot.protocol === 'vless' || slot.protocol === 'trojan') && !slot.reality_public_key && slot.owner_id)
     .map(slot => Number(slot.owner_id));
 }
 
@@ -19,6 +19,7 @@ async function withTenantKeys(db: D1Database, query: () => Promise<NodeInboundSl
 
 /**
  * 供 VPS 节点心跳同步构建 sing-box 服务端配置使用
+ * 端口、跳跃端口、混淆密码和拥塞控制算法直接继承主模板设置
  * Reality 私钥取自节点所属租户，绝不下发其他租户的密钥
  */
 export async function getInboundsForServer(
@@ -26,7 +27,8 @@ export async function getInboundsForServer(
   nodeId: number
 ): Promise<NodeInboundSlot[]> {
   return withTenantKeys(db, async () => (await db.prepare(`
-    SELECT ni.id, ni.node_id, ni.template_id, ni.listen_port, ni.hop_ports, ni.enabled,
+    SELECT ni.id, ni.node_id, ni.template_id, ni.enabled,
+           it.listen_port, it.hop_ports, it.hy2_obfs_password, it.tuic_congestion_control,
            n.owner_id, it.name as template_name, it.protocol,
            it.reality_dest, it.reality_server_name, owner.reality_private_key, owner.reality_public_key, it.reality_short_id,
            it.hy2_up_mbps, it.hy2_down_mbps, it.hy2_masquerade
@@ -37,7 +39,7 @@ export async function getInboundsForServer(
     WHERE ni.node_id = ?
       AND (ni.enabled IS NULL OR ni.enabled = 1)
       AND (it.owner_id IS NULL OR it.owner_id = n.owner_id)
-    ORDER BY ni.listen_port ASC, ni.id ASC
+    ORDER BY it.listen_port ASC, ni.id ASC
   `).bind(nodeId).all<NodeInboundSlot>()).results || []);
 }
 
@@ -55,7 +57,8 @@ export async function getInboundsForSubscription(
   const enabledClause = includeDisabled ? '' : ' AND (ni.enabled IS NULL OR ni.enabled = 1)';
 
   return withTenantKeys(db, async () => (await db.prepare(`
-    SELECT ni.id, ni.node_id, ni.template_id, ni.listen_port, ni.hop_ports, ni.enabled,
+    SELECT ni.id, ni.node_id, ni.template_id, ni.enabled,
+           it.listen_port, it.hop_ports, it.hy2_obfs_password, it.tuic_congestion_control,
            n.owner_id, it.name as template_name, it.protocol,
            it.reality_dest, it.reality_server_name, owner.reality_public_key, it.reality_short_id,
            it.hy2_up_mbps, it.hy2_down_mbps, it.hy2_masquerade
@@ -65,6 +68,6 @@ export async function getInboundsForSubscription(
     JOIN inbound_templates it ON ni.template_id = it.id
     WHERE ni.node_id IN (${placeholders})${enabledClause}
       AND (it.owner_id IS NULL OR it.owner_id = n.owner_id)
-    ORDER BY ni.listen_port ASC, ni.id ASC
+    ORDER BY it.listen_port ASC, ni.id ASC
   `).bind(...nodeIds).all<NodeInboundSlot>()).results || []);
 }

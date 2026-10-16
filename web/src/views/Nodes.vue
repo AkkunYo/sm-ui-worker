@@ -179,20 +179,24 @@
                 <div v-if="node.inbounds && node.inbounds.length > 0" class="flex flex-wrap gap-1 mt-1.5">
                   <span
                     v-for="slot in node.inbounds"
-                    :key="slot.id || (slot.template_id + '-' + slot.listen_port)"
+                    :key="slot.id || slot.template_id"
                     class="px-1.5 py-0.5 rounded text-[10px] font-mono font-medium flex items-center gap-1"
                     :class="slot.enabled === 0
                       ? 'bg-slate-800/60 text-slate-500 border border-slate-700/50 line-through'
                       : slot.protocol === 'vless'
                         ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20'
-                        : 'bg-sky-500/10 text-sky-400 border border-sky-500/20'"
+                        : slot.protocol === 'hysteria2'
+                          ? 'bg-sky-500/10 text-sky-400 border border-sky-500/20'
+                          : slot.protocol === 'tuic'
+                            ? 'bg-violet-500/10 text-violet-400 border border-violet-500/20'
+                            : slot.protocol === 'trojan'
+                              ? 'bg-amber-500/10 text-amber-400 border border-amber-500/20'
+                              : 'bg-rose-500/10 text-rose-400 border border-rose-500/20'"
                   >
-                    <span>{{ slot.protocol === 'vless' ? 'VLESS' : 'Hy2' }}:{{ slot.listen_port }}</span>
+                    <span>{{ slot.protocol ? slot.protocol.toUpperCase() : 'SLOT' }}:{{ slot.listen_port }}</span>
                     <span v-if="slot.hop_ports" class="text-[9px] text-sky-300/80">⇄Hop</span>
+                    <span v-if="slot.hy2_obfs_password" class="text-[9px] text-amber-300/80">🛡Obfs</span>
                   </span>
-                </div>
-                <div v-else class="text-[10px] text-slate-500 font-mono mt-1">
-                  :{{ node.proxy_port || 2096 }}
                 </div>
 
                 <div class="text-[10px] text-slate-500 font-mono mt-1 flex items-center space-x-1.5 flex-wrap">
@@ -302,9 +306,9 @@
             <div class="flex items-center justify-between">
               <div>
                 <label class="block text-xs font-semibold text-slate-200 uppercase tracking-wider">
-                  端口与协议插槽 (Inbound Slots)
+                  挂载协议模板 (Inbound Slots)
                 </label>
-                <p class="text-[11px] text-slate-500">将模板池挂载到主机端口，支持单端口 TCP(VLESS) + UDP(Hy2) 多路复用</p>
+                <p class="text-[11px] text-slate-500">主模板统一管控端口与参数，子主机自动遵从规则</p>
               </div>
               <button
                 type="button"
@@ -312,70 +316,43 @@
                 class="px-2.5 py-1 rounded-lg bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 text-xs font-medium flex items-center space-x-1 transition"
               >
                 <Plus class="w-3.5 h-3.5" />
-                <span>添加插槽</span>
+                <span>挂载模板</span>
               </button>
             </div>
 
             <div v-if="addForm.inbounds.length === 0" class="p-4 rounded-xl bg-slate-950 border border-dashed border-slate-800 text-center text-xs text-slate-500">
-              暂未挂载任何插槽，默认将自动绑定系统默认协议模板。
+              暂未挂载任何模板，默认将自动绑定系统默认协议模板。
             </div>
 
-            <div v-else class="space-y-2.5">
+            <div v-else class="space-y-2">
               <div
                 v-for="(slot, idx) in addForm.inbounds"
                 :key="idx"
-                class="p-3 rounded-xl bg-slate-950 border border-slate-800/80 space-y-2"
+                class="p-2.5 rounded-xl bg-slate-950 border border-slate-800/80 flex items-center justify-between gap-3"
               >
-                <div class="flex items-center justify-between gap-2">
-                  <div class="flex-1 min-w-0">
-                    <select
-                      v-model="slot.template_id"
-                      class="w-full px-3 py-1.5 rounded-lg bg-slate-900 border border-slate-700 text-xs text-slate-100 focus:outline-none"
-                    >
-                      <option v-for="t in availableTemplates" :key="t.id" :value="t.id">
-                        [{{ t.protocol === 'vless' ? 'VLESS' : 'Hy2' }}] {{ t.name }}{{ t.owner_id === null ? ' (系统)' : '' }}
-                      </option>
-                    </select>
-                  </div>
-                  <div class="flex items-center space-x-2 shrink-0">
-                    <label class="flex items-center space-x-1 text-xs text-slate-400 cursor-pointer">
-                      <input type="checkbox" :checked="slot.enabled === 1" @change="slot.enabled = $event.target.checked ? 1 : 0" class="rounded bg-slate-900 border-slate-700 text-emerald-500 w-3.5 h-3.5" />
-                      <span class="text-[11px]">启用</span>
-                    </label>
-                    <button
-                      type="button"
-                      @click="removeSlot(addForm, idx)"
-                      class="p-1 text-slate-500 hover:text-rose-400 transition"
-                      title="移除插槽"
-                    >
-                      <Trash2 class="w-3.5 h-3.5" />
-                    </button>
-                  </div>
+                <div class="flex-1 min-w-0">
+                  <select
+                    v-model="slot.template_id"
+                    class="w-full px-3 py-1.5 rounded-lg bg-slate-900 border border-slate-700 text-xs text-slate-100 focus:outline-none"
+                  >
+                    <option v-for="t in availableTemplates" :key="t.id" :value="t.id">
+                      [{{ t.protocol.toUpperCase() }}:{{ t.listen_port }}] {{ t.name }}{{ t.hop_ports ? ' ⇄' + t.hop_ports : '' }}{{ t.owner_id === null ? ' (系统)' : '' }}
+                    </option>
+                  </select>
                 </div>
-
-                <div class="grid grid-cols-2 gap-2 text-xs">
-                  <div>
-                    <label class="block text-[10px] text-slate-400 mb-1">监听端口</label>
-                    <input
-                      v-model.number="slot.listen_port"
-                      type="number"
-                      required
-                      placeholder="2096"
-                      class="w-full px-2.5 py-1.5 rounded-lg bg-slate-900 border border-slate-800 text-xs text-slate-100 font-mono focus:outline-none"
-                    />
-                  </div>
-                  <div v-if="getTemplateProtocol(slot.template_id) === 'hysteria2'">
-                    <label class="block text-[10px] text-slate-400 mb-1">跳跃端口 (可选)</label>
-                    <input
-                      v-model="slot.hop_ports"
-                      type="text"
-                      placeholder="如 22200-22300"
-                      class="w-full px-2.5 py-1.5 rounded-lg bg-slate-900 border border-slate-800 text-xs text-slate-100 font-mono focus:outline-none"
-                    />
-                  </div>
-                  <div v-else class="flex items-end">
-                    <span class="text-[10px] text-slate-500 pb-1.5">TCP 协议监听</span>
-                  </div>
+                <div class="flex items-center space-x-2 shrink-0">
+                  <label class="flex items-center space-x-1 text-xs text-slate-400 cursor-pointer">
+                    <input type="checkbox" :checked="slot.enabled === 1" @change="slot.enabled = $event.target.checked ? 1 : 0" class="rounded bg-slate-900 border-slate-700 text-emerald-500 w-3.5 h-3.5" />
+                    <span class="text-[11px]">启用</span>
+                  </label>
+                  <button
+                    type="button"
+                    @click="removeSlot(addForm, idx)"
+                    class="p-1 text-slate-500 hover:text-rose-400 transition"
+                    title="移除挂载"
+                  >
+                    <Trash2 class="w-3.5 h-3.5" />
+                  </button>
                 </div>
               </div>
             </div>
@@ -622,65 +599,38 @@
             </div>
 
             <div v-if="!editForm.inbounds || editForm.inbounds.length === 0" class="p-4 rounded-xl bg-slate-950 border border-dashed border-slate-800 text-center text-xs text-slate-500">
-              暂未挂载任何插槽，请点击上方“添加插槽”进行配置。
+              暂未挂载任何模板，请点击上方“添加插槽”进行挂载。
             </div>
 
-            <div v-else class="space-y-2.5">
+            <div v-else class="space-y-2">
               <div
                 v-for="(slot, idx) in editForm.inbounds"
                 :key="idx"
-                class="p-3 rounded-xl bg-slate-950 border border-slate-800/80 space-y-2"
+                class="p-2.5 rounded-xl bg-slate-950 border border-slate-800/80 flex items-center justify-between gap-3"
               >
-                <div class="flex items-center justify-between gap-2">
-                  <div class="flex-1 min-w-0">
-                    <select
-                      v-model="slot.template_id"
-                      class="w-full px-3 py-1.5 rounded-lg bg-slate-900 border border-slate-700 text-xs text-slate-100 focus:outline-none"
-                    >
-                      <option v-for="t in availableTemplates" :key="t.id" :value="t.id">
-                        [{{ t.protocol === 'vless' ? 'VLESS' : 'Hy2' }}] {{ t.name }}{{ t.owner_id === null ? ' (系统)' : '' }}
-                      </option>
-                    </select>
-                  </div>
-                  <div class="flex items-center space-x-2 shrink-0">
-                    <label class="flex items-center space-x-1 text-xs text-slate-400 cursor-pointer">
-                      <input type="checkbox" :checked="slot.enabled === 1" @change="slot.enabled = $event.target.checked ? 1 : 0" class="rounded bg-slate-900 border-slate-700 text-emerald-500 w-3.5 h-3.5" />
-                      <span class="text-[11px]">启用</span>
-                    </label>
-                    <button
-                      type="button"
-                      @click="removeSlot(editForm, idx)"
-                      class="p-1 text-slate-500 hover:text-rose-400 transition"
-                      title="移除插槽"
-                    >
-                      <Trash2 class="w-3.5 h-3.5" />
-                    </button>
-                  </div>
+                <div class="flex-1 min-w-0">
+                  <select
+                    v-model="slot.template_id"
+                    class="w-full px-3 py-1.5 rounded-lg bg-slate-900 border border-slate-700 text-xs text-slate-100 focus:outline-none"
+                  >
+                    <option v-for="t in availableTemplates" :key="t.id" :value="t.id">
+                      [{{ t.protocol.toUpperCase() }}:{{ t.listen_port }}] {{ t.name }}{{ t.hop_ports ? ' ⇄' + t.hop_ports : '' }}{{ t.owner_id === null ? ' (系统)' : '' }}
+                    </option>
+                  </select>
                 </div>
-
-                <div class="grid grid-cols-2 gap-2 text-xs">
-                  <div>
-                    <label class="block text-[10px] text-slate-400 mb-1">监听端口</label>
-                    <input
-                      v-model.number="slot.listen_port"
-                      type="number"
-                      required
-                      placeholder="2096"
-                      class="w-full px-2.5 py-1.5 rounded-lg bg-slate-900 border border-slate-800 text-xs text-slate-100 font-mono focus:outline-none"
-                    />
-                  </div>
-                  <div v-if="getTemplateProtocol(slot.template_id) === 'hysteria2'">
-                    <label class="block text-[10px] text-slate-400 mb-1">跳跃端口 (可选)</label>
-                    <input
-                      v-model="slot.hop_ports"
-                      type="text"
-                      placeholder="如 22200-22300"
-                      class="w-full px-2.5 py-1.5 rounded-lg bg-slate-900 border border-slate-800 text-xs text-slate-100 font-mono focus:outline-none"
-                    />
-                  </div>
-                  <div v-else class="flex items-end">
-                    <span class="text-[10px] text-slate-500 pb-1.5">TCP 协议监听</span>
-                  </div>
+                <div class="flex items-center space-x-2 shrink-0">
+                  <label class="flex items-center space-x-1 text-xs text-slate-400 cursor-pointer">
+                    <input type="checkbox" :checked="slot.enabled === 1" @change="slot.enabled = $event.target.checked ? 1 : 0" class="rounded bg-slate-900 border-slate-700 text-emerald-500 w-3.5 h-3.5" />
+                    <span class="text-[11px]">启用</span>
+                  </label>
+                  <button
+                    type="button"
+                    @click="removeSlot(editForm, idx)"
+                    class="p-1 text-slate-500 hover:text-rose-400 transition"
+                    title="移除挂载"
+                  >
+                    <Trash2 class="w-3.5 h-3.5" />
+                  </button>
                 </div>
               </div>
             </div>
@@ -782,8 +732,6 @@ function addSlot(targetForm) {
   const defaultTpl = availableTemplates.value[0]
   targetForm.inbounds.push({
     template_id: defaultTpl ? defaultTpl.id : 1,
-    listen_port: 2096,
-    hop_ports: '',
     enabled: 1
   })
 }
@@ -798,8 +746,6 @@ const addForm = reactive({
   owner_id: null,
   name: '',
   server_ip: '',
-  proxy_port: 443,
-  hop_ports: '',
   inbounds: []
 })
 
@@ -877,13 +823,9 @@ function formatUptime(seconds) {
 function openAddModal() {
   addForm.name = ''
   addForm.server_ip = ''
-  addForm.proxy_port = 443
-  addForm.hop_ports = ''
   addForm.owner_id = currentUser.value?.id || null
-  addForm.inbounds = availableTemplates.value.map(t => ({
+  addForm.inbounds = availableTemplates.value.filter(t => t.is_default).map(t => ({
     template_id: t.id,
-    listen_port: 2096,
-    hop_ports: '',
     enabled: 1
   }))
   showAddModal.value = true
@@ -981,8 +923,6 @@ const editForm = reactive({
   id: null,
   name: '',
   server_ip: '',
-  proxy_port: 443,
-  hop_ports: '',
   token: '',
   is_local: false,
   inbounds: []
@@ -992,21 +932,15 @@ function openEditModal(node) {
   editForm.id = node.id
   editForm.name = node.name
   editForm.server_ip = node.server_ip || ''
-  editForm.proxy_port = node.proxy_port || 443
-  editForm.hop_ports = node.hop_ports || ''
   editForm.token = node.token || ''
   editForm.is_local = Boolean(node.is_local)
   editForm.inbounds = Array.isArray(node.inbounds) && node.inbounds.length > 0
     ? node.inbounds.map(s => ({
         template_id: s.template_id,
-        listen_port: s.listen_port,
-        hop_ports: s.hop_ports || '',
         enabled: s.enabled !== 0 ? 1 : 0
       }))
-    : availableTemplates.value.map(t => ({
+    : availableTemplates.value.filter(t => t.is_default).map(t => ({
         template_id: t.id,
-        listen_port: 2096,
-        hop_ports: '',
         enabled: 1
       }))
   showEditModal.value = true
@@ -1018,8 +952,6 @@ async function saveEditNode() {
     const payload = {
       name: editForm.name,
       server_ip: editForm.server_ip,
-      proxy_port: editForm.proxy_port,
-      hop_ports: editForm.hop_ports,
       inbounds: editForm.inbounds
     }
     const res = await request(`/api/v1/nodes/${editForm.id}`, {

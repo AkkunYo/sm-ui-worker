@@ -129,11 +129,13 @@ syncRoute.post('/api/v2/node/sync', async (c) => {
   const reportedStatus = node.desired_state === 'active' && ['online', 'offline'].includes(requestedStatus) ? requestedStatus : 'disabled';
   const appliedHash = typeof body.applied_config_hash === 'string' ? body.applied_config_hash.trim().slice(0, 128) : '';
   const applyError = typeof body.apply_error === 'string' ? body.apply_error.slice(0, 1000) : '';
+  const certSha256 = typeof body.cert_sha256 === 'string' ? body.cert_sha256.trim().slice(0, 64).toLowerCase() : '';
 
   await c.env.DB.prepare(`
     UPDATE nodes SET
       status = ?, server_ip = CASE WHEN TRIM(COALESCE(server_ip, '')) = '' AND ? <> '' THEN ? ELSE server_ip END,
       address_locked = CASE WHEN TRIM(COALESCE(server_ip, '')) = '' AND ? <> '' THEN 1 ELSE address_locked END,
+      cert_sha256 = CASE WHEN ? <> '' THEN ? ELSE cert_sha256 END,
       last_heartbeat_at = ?, rtt_ms = ?, cpu_percent = ?, memory_percent = ?, uptime_seconds = ?,
       core_version = ?, agent_version = ?,
       updated_at = datetime('now')
@@ -142,6 +144,7 @@ syncRoute.post('/api/v2/node/sync', async (c) => {
     reportedStatus,
     serverIP, serverIP,
     serverIP,
+    certSha256, certSha256,
     now,
     Number.isFinite(Number(body.rtt_ms)) ? Number(body.rtt_ms) : 0,
     Number.isFinite(Number(body.cpu_percent)) ? Number(body.cpu_percent) : 0,
