@@ -1,9 +1,22 @@
 import { Hono } from 'hono';
 import { generateToken } from '../keys';
-import { authMiddleware, adminOnly } from '../middleware/auth';
+import { authMiddleware } from '../middleware/auth';
 import type { AppBindings, AppVariables, JwtUser } from '../types';
 
 export const templatesRoute = new Hono<{ Bindings: AppBindings; Variables: AppVariables }>();
+
+const ALLOWED_PROTOCOLS = ['vless', 'hysteria2', 'tuic', 'trojan', 'anytls'] as const;
+type AllowedProtocol = typeof ALLOWED_PROTOCOLS[number];
+
+function defaultPortForProtocol(protocol: AllowedProtocol): number {
+  switch (protocol) {
+    case 'vless': return 2096;
+    case 'hysteria2': return 2096;
+    case 'tuic': return 8443;
+    case 'trojan': return 443;
+    case 'anytls': return 10443;
+  }
+}
 
 templatesRoute.get('/api/v1/templates', authMiddleware, async (c) => {
   const currentUser = c.get('user') as JwtUser;
@@ -30,12 +43,16 @@ templatesRoute.post('/api/v1/templates', authMiddleware, async (c) => {
   const currentUser = c.get('user') as JwtUser;
   const body = await c.req.json().catch(() => ({}));
   const name = typeof body?.name === 'string' ? body.name.trim() : '';
-  const protocol = typeof body?.protocol === 'string' ? body.protocol.toLowerCase().trim() : '';
+  const protocol = (typeof body?.protocol === 'string' ? body.protocol.toLowerCase().trim() : '') as AllowedProtocol;
 
   if (!name) return c.json({ error: '模板名称不能为空' }, 400);
-  if (protocol !== 'vless' && protocol !== 'hysteria2') {
-    return c.json({ error: '协议类型必须为 vless 或 hysteria2' }, 400);
+  if (!ALLOWED_PROTOCOLS.includes(protocol)) {
+    return c.json({ error: `协议类型必须为 ${ALLOWED_PROTOCOLS.join(' / ')}` }, 400);
   }
+
+  const rawPort = Number.parseInt(String(body.listen_port || ''), 10);
+  const listenPort = Number.isInteger(rawPort) && rawPort >= 1 && rawPort <= 65535
+    ? rawPort : defaultPortForProtocol(protocol);
 
   let ownerId: number | null = currentUser.userId;
   if (currentUser.role === 'admin' && body.is_system === true) {
@@ -43,22 +60,41 @@ templatesRoute.post('/api/v1/templates', authMiddleware, async (c) => {
   }
 
   const isDefault = (currentUser.role === 'admin' && body.is_default) ? 1 : 0;
+  const hopPorts = typeof body.hop_ports === 'string' ? body.hop_ports.trim() : '';
   const realityDest = (body.reality_dest || 'www.amazon.com:443').trim();
   const realityServerName = (body.reality_server_name || 'www.amazon.com').trim();
-  const realityShortId = protocol === 'vless' ? ((body.reality_short_id || '').trim() || generateToken(16)) : '';
+  const realityShortId = (protocol === 'vless' || protocol === 'trojan')
+    ? ((body.reality_short_id || '').trim() || generateToken(16)) : '';
 
   const hy2UpMbps = parseInt(body.hy2_up_mbps, 10) || 100;
   const hy2DownMbps = parseInt(body.hy2_down_mbps, 10) || 100;
   const hy2Masquerade = (body.hy2_masquerade || 'https://bing.com').trim();
 
+  let hy2ObfsPassword = '';
+  if (protocol === 'hysteria2') {
+    if (body.hy2_obfs_enabled) {
+      hy2ObfsPassword = typeof body.hy2_obfs_password === 'string' && body.hy2_obfs_password.trim()
+        ? body.hy2_obfs_password.trim()
+        : generateToken(16);
+    }
+  }
+
+  const tuicCongestion = protocol === 'tuic'
+    ? (typeof body.tuic_congestion_control === 'string' && body.tuic_congestion_control.trim() ? body.tuic_congestion_control.trim().toLowerCase() : 'bbr')
+    : 'bbr';
+
   const res = await c.env.DB.prepare(`
     INSERT INTO inbound_templates (
-      owner_id, name, protocol, reality_dest, reality_server_name, reality_short_id,
-      hy2_up_mbps, hy2_down_mbps, hy2_masquerade, is_default
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      owner_id, name, protocol, listen_port, hop_ports,
+      reality_dest, reality_server_name, reality_short_id,
+      hy2_up_mbps, hy2_down_mbps, hy2_masquerade, hy2_obfs_password, tuic_congestion_control,
+      is_default
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).bind(
-    ownerId, name, protocol, realityDest, realityServerName, realityShortId,
-    hy2UpMbps, hy2DownMbps, hy2Masquerade, isDefault
+    ownerId, name, protocol, listenPort, hopPorts,
+    realityDest, realityServerName, realityShortId,
+    hy2UpMbps, hy2DownMbps, hy2Masquerade, hy2ObfsPassword, tuicCongestion,
+    isDefault
   ).run();
 
   return c.json({ success: true, id: res.meta.last_row_id });
@@ -67,7 +103,7 @@ templatesRoute.post('/api/v1/templates', authMiddleware, async (c) => {
 templatesRoute.put('/api/v1/templates/:id', authMiddleware, async (c) => {
   const currentUser = c.get('user') as JwtUser;
   const id = parseInt(c.req.param('id') || '0', 10);
-  const body = await c.req.json();
+  const body = await c.req.json().catch(() => ({}));
 
   let tmpl: any = null;
   if (currentUser.role === 'admin') {
@@ -77,25 +113,47 @@ templatesRoute.put('/api/v1/templates/:id', authMiddleware, async (c) => {
   }
   if (!tmpl) return c.json({ error: '模板不存在或无权限修改' }, 404);
 
-  const name = body.name ? body.name.trim() : tmpl.name;
+  const name = typeof body.name === 'string' && body.name.trim() ? body.name.trim() : tmpl.name;
+  const rawPort = Number.parseInt(String(body.listen_port || ''), 10);
+  const listenPort = Number.isInteger(rawPort) && rawPort >= 1 && rawPort <= 65535
+    ? rawPort : tmpl.listen_port;
+
+  const hopPorts = body.hop_ports !== undefined ? String(body.hop_ports).trim() : (tmpl.hop_ports || '');
   const realityDest = body.reality_dest !== undefined ? body.reality_dest.trim() : tmpl.reality_dest;
   const realityServerName = body.reality_server_name !== undefined ? body.reality_server_name.trim() : tmpl.reality_server_name;
   const realityShortId = body.reality_short_id !== undefined ? body.reality_short_id.trim() : tmpl.reality_short_id;
   const hy2UpMbps = body.hy2_up_mbps !== undefined ? parseInt(body.hy2_up_mbps, 10) : tmpl.hy2_up_mbps;
   const hy2DownMbps = body.hy2_down_mbps !== undefined ? parseInt(body.hy2_down_mbps, 10) : tmpl.hy2_down_mbps;
   const hy2Masquerade = body.hy2_masquerade !== undefined ? body.hy2_masquerade.trim() : tmpl.hy2_masquerade;
+
+  let hy2ObfsPassword = tmpl.hy2_obfs_password || '';
+  if (body.hy2_obfs_enabled !== undefined) {
+    if (body.hy2_obfs_enabled) {
+      hy2ObfsPassword = typeof body.hy2_obfs_password === 'string' && body.hy2_obfs_password.trim()
+        ? body.hy2_obfs_password.trim()
+        : (hy2ObfsPassword || generateToken(16));
+    } else {
+      hy2ObfsPassword = '';
+    }
+  }
+
+  const tuicCongestion = body.tuic_congestion_control !== undefined
+    ? String(body.tuic_congestion_control).trim().toLowerCase() : (tmpl.tuic_congestion_control || 'bbr');
+
   const isDefault = (currentUser.role === 'admin' && body.is_default !== undefined) ? (body.is_default ? 1 : 0) : tmpl.is_default;
 
   await c.env.DB.prepare(`
     UPDATE inbound_templates SET
-      name = ?, reality_dest = ?, reality_server_name = ?, reality_short_id = ?,
-      hy2_up_mbps = ?, hy2_down_mbps = ?, hy2_masquerade = ?, is_default = ?,
-      updated_at = datetime('now')
+      name = ?, listen_port = ?, hop_ports = ?,
+      reality_dest = ?, reality_server_name = ?, reality_short_id = ?,
+      hy2_up_mbps = ?, hy2_down_mbps = ?, hy2_masquerade = ?, hy2_obfs_password = ?, tuic_congestion_control = ?,
+      is_default = ?, updated_at = datetime('now')
     WHERE id = ?
   `).bind(
-    name, realityDest, realityServerName, realityShortId,
-    hy2UpMbps, hy2DownMbps, hy2Masquerade, isDefault,
-    id
+    name, listenPort, hopPorts,
+    realityDest, realityServerName, realityShortId,
+    hy2UpMbps, hy2DownMbps, hy2Masquerade, hy2ObfsPassword, tuicCongestion,
+    isDefault, id
   ).run();
 
   return c.json({ success: true });
@@ -116,7 +174,7 @@ templatesRoute.delete('/api/v1/templates/:id', authMiddleware, async (c) => {
   // Check if template is referenced in node_inbounds
   const inUse = await c.env.DB.prepare('SELECT COUNT(*) as count FROM node_inbounds WHERE template_id = ?').bind(id).first<{ count: number }>();
   if (inUse && inUse.count > 0) {
-    return c.json({ error: `该模板当前正被 ${inUse.count} 个主机插槽使用，不可直接删除` }, 400);
+    return c.json({ error: `该模板当前正被 ${inUse.count} 个主机使用，不可直接删除` }, 400);
   }
 
   await c.env.DB.prepare('DELETE FROM inbound_templates WHERE id = ?').bind(id).run();

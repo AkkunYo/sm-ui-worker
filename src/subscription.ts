@@ -24,7 +24,40 @@ function toClashProxy(ep: ResolvedEndpoint) {
     };
   }
 
-  // hysteria2
+  if (ep.protocol === 'trojan') {
+    return {
+      name: ep.name,
+      type: 'trojan',
+      server: ep.server,
+      port: ep.port,
+      password: ep.password,
+      network: 'tcp',
+      tls: true,
+      'reality-opts': {
+        'public-key': ep.realityPublicKey || '',
+        'short-id': ep.realityShortId || '0123456789abcdef'
+      },
+      servername: ep.realityServerName || 'www.amazon.com',
+      'client-fingerprint': 'chrome'
+    };
+  }
+
+  if (ep.protocol === 'tuic') {
+    return {
+      name: ep.name,
+      type: 'tuic',
+      server: ep.server,
+      port: ep.port,
+      uuid: ep.uuid,
+      password: ep.password,
+      alpn: ['h3'],
+      'congestion-controller': ep.tuicCongestionControl || 'bbr',
+      'skip-cert-verify': true,
+      sni: ep.sni || ep.server
+    };
+  }
+
+  // hysteria2 (and any other UDP/QUIC fallbacks)
   const base: any = {
     name: ep.name,
     type: 'hysteria2',
@@ -36,6 +69,11 @@ function toClashProxy(ep: ResolvedEndpoint) {
     up: `${ep.upMbps || 100} Mbps`,
     down: `${ep.downMbps || 100} Mbps`
   };
+
+  if (ep.hy2ObfsPassword) {
+    base.obfs = 'salamander';
+    base['obfs-password'] = ep.hy2ObfsPassword;
+  }
 
   if (ep.isHop && ep.hopPorts) {
     base.ports = ep.hopPorts;
@@ -69,9 +107,60 @@ function toSingBoxOutbound(ep: ResolvedEndpoint) {
     };
   }
 
-  // sing-box 1.11+ supports Hysteria2 port hopping through server_ports.
-  // Keep the regular endpoint on server_port and map the subscription's
-  // `start-end` notation to sing-box's `start:end` range syntax.
+  if (ep.protocol === 'trojan') {
+    return {
+      type: 'trojan',
+      tag: ep.name,
+      server: ep.server,
+      server_port: ep.port,
+      password: ep.password,
+      tls: {
+        enabled: true,
+        server_name: ep.realityServerName || 'www.amazon.com',
+        utls: { enabled: true, fingerprint: 'chrome' },
+        reality: {
+          enabled: true,
+          public_key: ep.realityPublicKey || '',
+          short_id: ep.realityShortId || '0123456789abcdef'
+        }
+      }
+    };
+  }
+
+  if (ep.protocol === 'tuic') {
+    return {
+      type: 'tuic',
+      tag: ep.name,
+      server: ep.server,
+      server_port: ep.port,
+      uuid: ep.uuid,
+      password: ep.password,
+      congestion_control: ep.tuicCongestionControl || 'bbr',
+      tls: {
+        enabled: true,
+        server_name: ep.sni || ep.server,
+        insecure: true,
+        alpn: ['h3']
+      }
+    };
+  }
+
+  if (ep.protocol === 'anytls') {
+    return {
+      type: 'anytls',
+      tag: ep.name,
+      server: ep.server,
+      server_port: ep.port,
+      password: ep.password,
+      tls: {
+        enabled: true,
+        server_name: ep.sni || ep.server,
+        insecure: true
+      }
+    };
+  }
+
+  // hysteria2
   const outbound: Record<string, unknown> = {
     type: 'hysteria2',
     tag: ep.name,
@@ -83,6 +172,12 @@ function toSingBoxOutbound(ep: ResolvedEndpoint) {
       insecure: true
     }
   };
+  if (ep.hy2ObfsPassword) {
+    outbound.obfs = {
+      type: 'salamander',
+      password: ep.hy2ObfsPassword
+    };
+  }
   if (ep.isHop && ep.hopPorts) {
     outbound.server_ports = [ep.hopPorts.trim().replace(/^(\d+)\s*-\s*(\d+)$/, '$1:$2')];
   } else {
@@ -101,15 +196,36 @@ export function toUriString(ep: ResolvedEndpoint): string {
     return `vless://${ep.uuid}@${ep.server}:${ep.port}?encryption=none&flow=${encodeURIComponent(ep.flow || 'xtls-rprx-vision')}&security=reality&sni=${encodeURIComponent(ep.realityServerName || 'www.amazon.com')}&fp=chrome&pbk=${encodeURIComponent(ep.realityPublicKey || '')}&sid=${encodeURIComponent(ep.realityShortId || '0123456789abcdef')}&type=tcp&headerType=none#${remark}`;
   }
 
-  // hysteria2
-  if (ep.isHop && ep.hopPorts) {
-    // NekoBox parses the authority as a single port and reads the hopping
-    // range from `mport`; placing the range in `host:port` makes the URI
-    // invalid to its URL parser and the node is silently dropped.
-    return `hysteria2://${encodeURIComponent(ep.password || '')}@${ep.server}:${ep.port}?alpn=h3&insecure=1&allowInsecure=1&mport=${encodeURIComponent(ep.hopPorts)}&sni=${encodeURIComponent(ep.sni || ep.server)}&upmbps=${ep.upMbps || 100}&downmbps=${ep.downMbps || 100}#${remark}`;
+  if (ep.protocol === 'trojan') {
+    return `trojan://${encodeURIComponent(ep.password || '')}@${ep.server}:${ep.port}?security=reality&sni=${encodeURIComponent(ep.realityServerName || 'www.amazon.com')}&fp=chrome&pbk=${encodeURIComponent(ep.realityPublicKey || '')}&sid=${encodeURIComponent(ep.realityShortId || '0123456789abcdef')}&type=tcp#${remark}`;
   }
 
-  return `hysteria2://${encodeURIComponent(ep.password || '')}@${ep.server}:${ep.port}?alpn=h3&insecure=1&allowInsecure=1&sni=${encodeURIComponent(ep.sni || ep.server)}&upmbps=${ep.upMbps || 100}&downmbps=${ep.downMbps || 100}#${remark}`;
+  if (ep.protocol === 'tuic') {
+    let pinParams = '';
+    if (ep.certSha256) {
+      pinParams = `&pinSHA256=${encodeURIComponent(ep.certSha256)}&pcs=${encodeURIComponent(ep.certSha256)}`;
+    }
+    return `tuic://${ep.uuid}:${encodeURIComponent(ep.password || '')}@${ep.server}:${ep.port}?alpn=h3&congestion_control=${encodeURIComponent(ep.tuicCongestionControl || 'bbr')}&insecure=1&allowInsecure=1&sni=${encodeURIComponent(ep.sni || ep.server)}${pinParams}#${remark}`;
+  }
+
+  if (ep.protocol === 'anytls') {
+    return `anytls://${encodeURIComponent(ep.password || '')}@${ep.server}:${ep.port}?insecure=1&allowInsecure=1&sni=${encodeURIComponent(ep.sni || ep.server)}#${remark}`;
+  }
+
+  // hysteria2
+  let extraParams = '';
+  if (ep.hy2ObfsPassword) {
+    extraParams += `&obfs=salamander&obfs-password=${encodeURIComponent(ep.hy2ObfsPassword)}`;
+  }
+  if (ep.certSha256) {
+    extraParams += `&pinSHA256=${encodeURIComponent(ep.certSha256)}&pcs=${encodeURIComponent(ep.certSha256)}`;
+  }
+
+  if (ep.isHop && ep.hopPorts) {
+    return `hysteria2://${encodeURIComponent(ep.password || '')}@${ep.server}:${ep.port}?alpn=h3&insecure=1&allowInsecure=1&mport=${encodeURIComponent(ep.hopPorts)}&sni=${encodeURIComponent(ep.sni || ep.server)}&upmbps=${ep.upMbps || 100}&downmbps=${ep.downMbps || 100}${extraParams}#${remark}`;
+  }
+
+  return `hysteria2://${encodeURIComponent(ep.password || '')}@${ep.server}:${ep.port}?alpn=h3&insecure=1&allowInsecure=1&sni=${encodeURIComponent(ep.sni || ep.server)}&upmbps=${ep.upMbps || 100}&downmbps=${ep.downMbps || 100}${extraParams}#${remark}`;
 }
 
 export function buildSubscription(

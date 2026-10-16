@@ -29,17 +29,17 @@ beforeEach(async () => {
   for (const [id,owner] of [[1,null],[2,null],[3,3]]) await sql("INSERT INTO inbound_templates(id,owner_id,name,protocol) VALUES(?,?,?,'vless')",id,owner,'template-'+id);
   await sql("UPDATE inbound_templates SET protocol='hysteria2' WHERE id=2");
   await sql("INSERT INTO nodes(id,owner_id,name,server_ip,token,status,desired_config_version) VALUES(1,2,'original','192.0.2.1','node-1','online',14)");
-  await sql("INSERT INTO node_inbounds(id,node_id,template_id,listen_port,enabled) VALUES(99,1,1,2096,1)");
+  await sql("INSERT INTO node_inbounds(id,node_id,template_id,enabled) VALUES(99,1,1,1)");
 });
 test('node creation keeps every slot attached to the new node, regardless of slot row IDs', async () => {
-  const res = await request('/api/v1/nodes',{name:'new', owner_id:2,inbounds:[{template_id:1,listen_port:2096},{template_id:2,listen_port:2096}]});
+  const res = await request('/api/v1/nodes',{name:'new', owner_id:2,inbounds:[{template_id:1},{template_id:2}]});
   assert.equal(res.status,200,await res.clone().text());
   const node = await res.json();
   const slots = await db.prepare('SELECT node_id FROM node_inbounds WHERE node_id=?').bind(node.id).all();
   assert.equal(slots.results.length,2);
 });
 test('cross tenant bindings and reassignment without replacement are rejected atomically', async () => {
-  let res=await request('/api/v1/nodes/1',{name:'changed',inbounds:[{template_id:3,listen_port:2096}]},2,'PUT');
+  let res=await request('/api/v1/nodes/1',{name:'changed',inbounds:[{template_id:3}]},2,'PUT');
   assert.equal(res.status,400);
   assert.equal((await row('SELECT name FROM nodes WHERE id=1')).name,'original');
   await sql('UPDATE inbound_templates SET owner_id=2 WHERE id=1');
@@ -48,7 +48,7 @@ test('cross tenant bindings and reassignment without replacement are rejected at
   assert.equal((await row('SELECT owner_id FROM nodes WHERE id=1')).owner_id,2);
 });
 test('duplicate slots fail without changing node fields or losing existing slots', async () => {
-  const res=await request('/api/v1/nodes/1',{name:'changed',inbounds:[{template_id:1,listen_port:2096},{template_id:1,listen_port:2096}]},2,'PUT');
+  const res=await request('/api/v1/nodes/1',{name:'changed',inbounds:[{template_id:1},{template_id:1}]},2,'PUT');
   assert.ok(res.status>=400);
   assert.equal((await row('SELECT name FROM nodes WHERE id=1')).name,'original');
   assert.equal((await row('SELECT COUNT(*) n FROM node_inbounds WHERE node_id=1')).n,1);
@@ -108,7 +108,7 @@ test('owner reassignment with a stale traffic batch still delivers the new confi
 });
 test('each tenant gets its own Reality key pair for server config and subscription', async () => {
   await sql("INSERT INTO nodes(id,owner_id,name,server_ip,token) VALUES(2,3,'bob-node','192.0.2.2','node-2')");
-  await sql('INSERT INTO node_inbounds(node_id,template_id,listen_port) VALUES(2,1,2096)');
+  await sql('INSERT INTO node_inbounds(node_id,template_id) VALUES(2,1)');
   const alice=(await (await sync()).json()).config.inbounds[0].tls.reality.private_key;
   const bob=(await (await sync({},'node-2')).json()).config.inbounds[0].tls.reality.private_key;
   assert.ok(alice && bob);
@@ -167,7 +167,8 @@ test('explicit format wins over User Agent and subscription credentials stay unc
   assert.equal(outbound.server,'192.0.2.1'); assert.equal(outbound.uuid,'uuid-2');
 });
 test('sing-box subscription preserves hysteria2 port hopping',async()=>{
-  await sql("INSERT INTO node_inbounds(node_id,template_id,listen_port,hop_ports,enabled) VALUES(1,2,2096,'22200-22300',1)");
+  await sql("UPDATE inbound_templates SET hop_ports='22200-22300' WHERE id=2");
+  await sql("INSERT INTO node_inbounds(node_id,template_id,enabled) VALUES(1,2,1)");
   const res=await mf.dispatchFetch('https://test.local/sub/alice/sub-2?format=singbox');
   assert.equal(res.status,200);
   const config=await res.json();
@@ -176,7 +177,8 @@ test('sing-box subscription preserves hysteria2 port hopping',async()=>{
   assert.equal('server_port' in outbound,false);
 });
 test('base64 subscription emits NekoBox-compatible hysteria2 hopping URI',async()=>{
-  await sql("INSERT INTO node_inbounds(node_id,template_id,listen_port,hop_ports,enabled) VALUES(1,2,2096,'22200-22300',1)");
+  await sql("UPDATE inbound_templates SET hop_ports='22200-22300' WHERE id=2");
+  await sql("INSERT INTO node_inbounds(node_id,template_id,enabled) VALUES(1,2,1)");
   const res=await mf.dispatchFetch('https://test.local/sub/alice/sub-2?format=base64');
   assert.equal(res.status,200);
   const uris=Buffer.from(await res.text(),'base64').toString('utf8').split('\n');
@@ -211,7 +213,7 @@ test('node deletion hides from list, frees name for immediate recreation, and re
   const list = await (await request('/api/v1/nodes', undefined, 2, 'GET')).json();
   assert.equal(list.length, 0);
   // Re-creation with same name succeeds immediately
-  res = await request('/api/v1/nodes', { name: 'original', owner_id: 2, inbounds: [{ template_id: 1, listen_port: 2096 }] }, 2);
+  res = await request('/api/v1/nodes', { name: 'original', owner_id: 2, inbounds: [{ template_id: 1 }] }, 2);
   assert.equal(res.status, 200);
   // Revived PUT is rejected
   res = await request('/api/v1/nodes/1', { status: 'online' }, 2, 'PUT');
@@ -219,7 +221,7 @@ test('node deletion hides from list, frees name for immediate recreation, and re
 });
 test('cascade deletion of tenant safely cleans up nodes, templates and slot constraints', async () => {
   await sql("INSERT INTO nodes(id,owner_id,name,server_ip,token) VALUES(5,3,'bob-node','192.0.2.5','node-5')");
-  await sql('INSERT INTO node_inbounds(node_id,template_id,listen_port) VALUES(5,3,2096)');
+  await sql('INSERT INTO node_inbounds(node_id,template_id) VALUES(5,3)');
   const res = await request('/api/v1/users/3', undefined, 1, 'DELETE');
   assert.equal(res.status, 200);
   assert.equal(await row('SELECT id FROM users WHERE id=3'), null);
@@ -235,4 +237,61 @@ test('user input validation enforces non-negative integer quotas and valid ISO d
   assert.equal(res.status, 400);
   res = await request('/api/v1/users/2', { expire_at: 'not-a-date' }, 1, 'PUT');
   assert.equal(res.status, 400);
+});
+test('node reports cert_sha256 which is locked into hysteria2 and tuic subscriptions', async () => {
+  const fakeFingerprint = 'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855';
+  await sync({ cert_sha256: fakeFingerprint });
+  const rowNode = await row('SELECT cert_sha256 FROM nodes WHERE id=1');
+  assert.equal(rowNode.cert_sha256, fakeFingerprint);
+
+  await sql("INSERT INTO node_inbounds(node_id,template_id) VALUES(1,2)");
+  const subRes = await mf.dispatchFetch('https://test.local/sub/alice/sub-2?format=base64');
+  const uris = Buffer.from(await subRes.text(), 'base64').toString('utf8');
+  assert.match(uris, /pinSHA256=e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855/);
+  assert.match(uris, /pcs=e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855/);
+});
+test('hysteria2 with salamander obfs configures server and injects into subscriptions', async () => {
+  await sql("UPDATE inbound_templates SET hy2_obfs_password='secret-obfs-pwd' WHERE id=2");
+  await sql("INSERT INTO node_inbounds(node_id,template_id) VALUES(1,2)");
+
+  const syncRes = await (await sync()).json();
+  const hy2Inbound = syncRes.config.inbounds.find(i => i.type === 'hysteria2');
+  assert.ok(hy2Inbound);
+  assert.deepEqual(hy2Inbound.obfs, { type: 'salamander', password: 'secret-obfs-pwd' });
+
+  // Singbox format
+  const sbRes = await (await mf.dispatchFetch('https://test.local/sub/alice/sub-2?format=singbox')).json();
+  const sbHy2 = sbRes.outbounds.find(o => o.type === 'hysteria2');
+  assert.ok(sbHy2);
+  assert.deepEqual(sbHy2.obfs, { type: 'salamander', password: 'secret-obfs-pwd' });
+
+  // Base64 format
+  const b64Res = await (await mf.dispatchFetch('https://test.local/sub/alice/sub-2?format=base64')).text();
+  const uris = Buffer.from(b64Res, 'base64').toString('utf8');
+  assert.match(uris, /obfs=salamander/);
+  assert.match(uris, /obfs-password=secret-obfs-pwd/);
+});
+test('multi-protocol expansion supports tuic, trojan and anytls in server config and subscriptions', async () => {
+  await sql("INSERT INTO inbound_templates(id,name,protocol,listen_port,tuic_congestion_control) VALUES(10,'TUIC','tuic',8443,'bbr')");
+  await sql("INSERT INTO inbound_templates(id,name,protocol,listen_port,reality_server_name,reality_dest) VALUES(11,'Trojan','trojan',443,'www.amazon.com','www.amazon.com:443')");
+  await sql("INSERT INTO inbound_templates(id,name,protocol,listen_port) VALUES(12,'AnyTLS','anytls',10443)");
+
+  await sql("INSERT INTO node_inbounds(node_id,template_id) VALUES(1,10),(1,11),(1,12)");
+
+  const syncRes = await (await sync()).json();
+  const tuicIn = syncRes.config.inbounds.find(i => i.type === 'tuic');
+  const trojanIn = syncRes.config.inbounds.find(i => i.type === 'trojan');
+  const anytlsIn = syncRes.config.inbounds.find(i => i.type === 'anytls');
+
+  assert.ok(tuicIn && trojanIn && anytlsIn);
+  assert.equal(tuicIn.listen_port, 8443);
+  assert.equal(tuicIn.congestion_control, 'bbr');
+  assert.equal(trojanIn.listen_port, 443);
+  assert.equal(anytlsIn.listen_port, 10443);
+
+  // Subscriptions
+  const b64 = Buffer.from(await (await mf.dispatchFetch('https://test.local/sub/alice/sub-2?format=base64')).text(), 'base64').toString('utf8');
+  assert.match(b64, /^tuic:\/\//m);
+  assert.match(b64, /^trojan:\/\//m);
+  assert.match(b64, /^anytls:\/\//m);
 });
