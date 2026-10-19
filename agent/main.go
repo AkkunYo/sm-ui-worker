@@ -1,10 +1,8 @@
 package main
 
 import (
-	"archive/tar"
 	"bufio"
 	"bytes"
-	"compress/gzip"
 	"context"
 	"crypto/ecdsa"
 	"crypto/elliptic"
@@ -27,7 +25,6 @@ import (
 	"os/exec"
 	"os/signal"
 	"path/filepath"
-	"runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -474,11 +471,18 @@ func writeFileAtomic(path string, data []byte, perm os.FileMode) error {
 }
 
 func ensureSingBoxBinary(baseDir string) error {
-	symlink := filepath.Join(baseDir, "bin", "sing-box")
-	if fi, err := os.Stat(symlink); err == nil && !fi.IsDir() {
+	destBin := filepath.Join(baseDir, "bin", "sing-box")
+
+	// 1. If embedded sing-box core is available, extract or update it
+	if err := extractEmbeddedSingBox(baseDir); err != nil {
+		log.Printf("[embed] Warning: failed to extract embedded sing-box: %v", err)
+	}
+
+	if fi, err := os.Stat(destBin); err == nil && !fi.IsDir() {
 		return nil
 	}
 
+	// 2. Fallback to system-installed sing-box if embedded was not available (e.g. test/dev build)
 	candidates := []string{"sing-box", "/usr/local/bin/sing-box", "/usr/bin/sing-box", "/bin/sing-box"}
 	for _, cand := range candidates {
 		var found string
@@ -492,64 +496,14 @@ func ensureSingBoxBinary(baseDir string) error {
 			}
 		}
 		if found != "" {
-			_ = os.Remove(symlink)
-			if err := os.Symlink(found, symlink); err == nil {
+			_ = os.Remove(destBin)
+			if err := os.Symlink(found, destBin); err == nil {
 				return nil
 			}
 		}
 	}
 
-	// Download official release
-	arch := runtime.GOARCH
-	goos := runtime.GOOS
-	if goos != "linux" {
-		goos = "linux"
-	}
-	version := "1.14.2"
-	filename := fmt.Sprintf("sing-box-%s-%s-%s.tar.gz", version, goos, arch)
-	url := fmt.Sprintf("https://github.com/SagerNet/sing-box/releases/download/v%s/%s", version, filename)
-
-	log.Printf("Downloading sing-box %s from %s...", version, url)
-	resp, err := http.Get(url)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("download failed with status: %d", resp.StatusCode)
-	}
-
-	gzReader, err := gzip.NewReader(resp.Body)
-	if err != nil {
-		return err
-	}
-	defer gzReader.Close()
-
-	tarReader := tar.NewReader(gzReader)
-	destBin := filepath.Join(baseDir, "bin", fmt.Sprintf("sing-box-v%s", version))
-
-	for {
-		hdr, err := tarReader.Next()
-		if err == io.EOF {
-			break
-		}
-		if err != nil {
-			return err
-		}
-		if filepath.Base(hdr.Name) == "sing-box" && hdr.Typeflag == tar.TypeReg {
-			f, err := os.OpenFile(destBin, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0755)
-			if err != nil {
-				return err
-			}
-			_, _ = io.Copy(f, tarReader)
-			f.Close()
-			_ = os.Remove(symlink)
-			return os.Symlink(destBin, symlink)
-		}
-	}
-
-	return fmt.Errorf("sing-box binary not found in tarball")
+	return fmt.Errorf("sing-box binary not found at %s and no embedded binary available", destBin)
 }
 
 func ensureSelfSignedCert(certPath, keyPath string) {

@@ -5,7 +5,7 @@ set -e
 # Usage:
 #   curl -fsSL https://raw.githubusercontent.com/AkkunYo/sm-ui-worker/main/scripts/install.sh | \
 #     MASTER_URL="https://sm-ui.your-worker.workers.dev" \
-#     NODE_TOKEN="<uuid>" \
+#     NODE_TOKEN="<token>" \
 #     bash
 
 if [ -z "$MASTER_URL" ] || [ -z "$NODE_TOKEN" ]; then
@@ -27,21 +27,11 @@ DATA_DIR="/var/lib/sm-ui"
 
 mkdir -p "$DATA_DIR/bin" "$DATA_DIR/configs" "$DATA_DIR/certs"
 
-echo "--> Installing sing-box core (v1.14.2)..."
-curl -fsSL "https://github.com/SagerNet/sing-box/releases/download/v1.14.2/sing-box-1.14.2-linux-${GOARCH}.tar.gz" -o /tmp/sb.tar.gz
-tar -xzf /tmp/sb.tar.gz -C /tmp
-mv /tmp/sing-box-*/sing-box "$INSTALL_DIR/sing-box"
-chmod +x "$INSTALL_DIR/sing-box"
-ln -sf "$INSTALL_DIR/sing-box" "$DATA_DIR/bin/sing-box"
-rm -rf /tmp/sb.tar.gz /tmp/sing-box-*
-
-echo "--> Installing sm-node daemon..."
-curl -fsSL "https://github.com/AkkunYo/sm-ui-worker/releases/latest/download/sm-node-linux-${GOARCH}.tar.gz" -o /tmp/node.tar.gz 2>/dev/null || true
-if [ -f /tmp/node.tar.gz ]; then
-  tar -xzf /tmp/node.tar.gz -C "$INSTALL_DIR"
-  chmod +x "$INSTALL_DIR/sm-node"
-  rm -f /tmp/node.tar.gz
-fi
+echo "--> Installing self-contained sm-node daemon (with embedded sing-box core)..."
+curl -fsSL "https://github.com/AkkunYo/sm-ui-worker/releases/latest/download/sm-node-linux-${GOARCH}.tar.gz" -o /tmp/node.tar.gz
+tar -xzf /tmp/node.tar.gz -C "$INSTALL_DIR"
+chmod +x "$INSTALL_DIR/sm-node"
+rm -f /tmp/node.tar.gz
 
 cat <<SERVICE > /etc/systemd/system/sm-node.service
 [Unit]

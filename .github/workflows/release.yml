@@ -12,17 +12,18 @@ permissions:
 env:
   REGISTRY: ghcr.io
   IMAGE_NAME: akkunyo/sm-node
+  SING_BOX_VERSION: "1.14.2"
 
 jobs:
   # 0. Node and controller share one version: the tag must be v<package.json version>
   version:
     name: Verify Tag Matches package.json
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     outputs:
       version: ${{ steps.check.outputs.version }}
     steps:
       - name: Checkout Code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Check tag against package.json
         id: check
@@ -34,36 +35,54 @@ jobs:
           fi
           echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
 
-  # 1. Compile sm-node multi-arch binaries
+  # 1. Compile self-contained sm-node multi-arch binaries (with embedded sing-box)
   build-agent-binaries:
     name: Build & Release Node Binaries
     needs: version
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - name: Checkout Code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Setup Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v7
         with:
           go-version: '1.24'
           cache: true
           cache-dependency-path: agent/go.sum
 
-      - name: Compile sm-node
+      - name: Compile sing-box core and embed into sm-node
         run: |
           mkdir -p dist/amd64 dist/arm64 release-assets
           BUILD_TIME=$(date -u +%Y-%m-%dT%H:%M:%SZ)
           LDFLAGS="-s -w -X 'main.Version=${{ needs.version.outputs.version }}' -X 'main.GitCommit=${{ github.sha }}' -X 'main.BuildTime=${BUILD_TIME}'"
-          (cd agent && CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="${LDFLAGS}" -o ../dist/amd64/sm-node .)
-          (cd agent && CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -ldflags="${LDFLAGS}" -o ../dist/arm64/sm-node .)
-          tar -czf release-assets/sm-node-linux-amd64.tar.gz -C dist/amd64 sm-node
-          tar -czf release-assets/sm-node-linux-arm64.tar.gz -C dist/arm64 sm-node
+
+          echo "--> Cloning sing-box v${SING_BOX_VERSION}..."
+          git clone --depth 1 --branch "v${SING_BOX_VERSION}" https://github.com/sagernet/sing-box.git /tmp/sing-box-src
+
+          for arch in amd64 arm64; do
+            echo "--> Compiling sing-box core for linux/${arch}..."
+            (cd /tmp/sing-box-src && CGO_ENABLED=0 GOOS=linux GOARCH="$arch" go build -trimpath -ldflags="-s -w -buildid=" -tags "with_quic,with_utls,with_clash_api,with_v2ray_api" -o "/tmp/sing-box-${arch}" ./cmd/sing-box)
+
+            echo "--> Embedding sing-box into sm-node for linux/${arch}..."
+            gzip -c "/tmp/sing-box-${arch}" > agent/sing-box.gz
+            (cd agent && CGO_ENABLED=0 GOOS=linux GOARCH="$arch" go build -trimpath -ldflags="${LDFLAGS}" -o "../dist/${arch}/sm-node" .)
+
+            tar -czf "release-assets/sm-node-linux-${arch}.tar.gz" -C "dist/${arch}" sm-node
+          done
+
           cd release-assets && sha256sum sm-node-linux-amd64.tar.gz sm-node-linux-arm64.tar.gz > sha256sums.txt
+
+      - name: Upload pre-built binaries for container build
+        uses: actions/upload-artifact@v7
+        with:
+          name: prebuilt-dist
+          path: dist/
+          retention-days: 1
 
       - name: Create GitHub Release
         if: startsWith(github.ref, 'refs/tags/v')
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           files: |
             release-assets/sm-node-linux-amd64.tar.gz
@@ -75,23 +94,29 @@ jobs:
           prerelease: false
           generate_release_notes: true
 
-  # 2. Build and publish multi-arch sm-node docker image
+  # 2. Package and publish multi-arch sm-node docker image (seconds, no QEMU emulation)
   publish-container:
     name: Build & Publish Node Container
-    needs: version
-    runs-on: ubuntu-latest
+    needs: [version, build-agent-binaries]
+    runs-on: ubuntu-24.04
     steps:
       - name: Checkout Code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
+
+      - name: Download prebuilt binaries
+        uses: actions/download-artifact@v8
+        with:
+          name: prebuilt-dist
+          path: dist/
 
       - name: Set up QEMU
-        uses: docker/setup-qemu-action@v3
+        uses: docker/setup-qemu-action@v4
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@v4
 
       - name: Log in to GitHub Container Registry
-        uses: docker/login-action@v3
+        uses: docker/login-action@v4
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
@@ -99,7 +124,7 @@ jobs:
 
       - name: Generate image metadata
         id: meta
-        uses: docker/metadata-action@v5
+        uses: docker/metadata-action@v6
         with:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
           tags: |
@@ -108,15 +133,12 @@ jobs:
             type=semver,pattern={{version}}
 
       - name: Build and push multi-arch image
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
-          context: ./agent
+          context: .
           file: ./agent/Dockerfile
           platforms: linux/amd64,linux/arm64
           push: true
-          build-args: |
-            VERSION=${{ needs.version.outputs.version }}
-            COMMIT=${{ github.sha }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
