@@ -198,10 +198,8 @@
                   </span>
                 </div>
 
-                <div class="text-[10px] text-slate-500 font-mono mt-1 flex items-center space-x-1.5 flex-wrap">
-                  <span>singbox:{{ displayCoreVersion(node.core_version) }}</span>
-                  <span v-if="node.agent_version" class="text-slate-600">|</span>
-                  <span v-if="node.agent_version" class="text-slate-400">node:{{ displayCoreVersion(node.agent_version) }}</span>
+                <div class="text-[10px] text-slate-500 font-mono mt-1 flex items-center space-x-1">
+                  <span class="text-slate-400">v{{ (node.agent_version || node.core_version || '').replace(/^v/, '') || '—' }}</span>
                 </div>
               </td>
 
@@ -300,44 +298,60 @@
             <p class="text-[11px] text-slate-500 mt-1">若留空，当子节点启动并连入 Master 时，系统会自动提取其连接来源 IP 填入</p>
           </div>
 
-          <!-- Inbound Templates Multi-Select -->
-          <div class="space-y-2 pt-2 border-t border-slate-800">
+          <!-- Inbound Templates Multi-Select Dropdown -->
+          <div class="space-y-1.5 pt-2 border-t border-slate-800">
             <div class="flex items-center justify-between">
               <label class="block text-xs font-semibold text-slate-200 uppercase tracking-wider">
-                挂载协议主模板 (多选)
+                挂载协议模板 (多选)
               </label>
               <span class="text-[11px] text-slate-500 font-mono">
                 已选 {{ addForm.template_ids.length }} / {{ availableTemplates.length }}
               </span>
             </div>
-            <p class="text-[11px] text-slate-500">勾选该主机启用的协议模板；端口与参数严格遵从主模板规则，子主机仅有勾选权。</p>
 
-            <div class="space-y-1.5 max-h-56 overflow-y-auto pr-1">
-              <label
-                v-for="t in availableTemplates"
-                :key="t.id"
-                class="flex items-center justify-between p-2.5 rounded-xl border cursor-pointer transition select-none"
-                :class="addForm.template_ids.includes(t.id)
-                  ? 'bg-slate-800/80 border-emerald-500/40 text-white'
-                  : 'bg-slate-950/40 border-slate-800/80 text-slate-400 hover:border-slate-700'"
+            <div class="relative">
+              <div
+                @click="addDropdownOpen = !addDropdownOpen"
+                class="min-h-[42px] px-3 py-1.5 rounded-xl bg-slate-950 border border-slate-800 hover:border-slate-700 cursor-pointer flex items-center justify-between gap-2 flex-wrap"
               >
-                <div class="flex items-center space-x-2.5 min-w-0">
-                  <input
-                    type="checkbox"
-                    :value="t.id"
-                    v-model="addForm.template_ids"
-                    class="rounded bg-slate-900 border-slate-700 text-emerald-500 w-4 h-4 focus:ring-0 shrink-0"
-                  />
-                  <div class="truncate text-xs">
-                    <span class="font-semibold text-slate-200">{{ t.name }}</span>
-                    <span class="text-slate-500 font-mono ml-2">:{{ t.listen_port }}</span>
-                    <span v-if="t.hy2_obfs_password" class="text-amber-400 text-[10px] ml-1.5">🛡混淆</span>
-                  </div>
+                <div class="flex items-center gap-1.5 flex-wrap">
+                  <span v-if="addForm.template_ids.length === 0" class="text-xs text-slate-500">
+                    请选择挂载协议模板...
+                  </span>
+                  <span
+                    v-for="tid in addForm.template_ids"
+                    :key="tid"
+                    class="px-2 py-0.5 rounded text-[11px] font-mono font-medium border"
+                    :class="getProtoBadge(getTemplateById(tid)?.protocol).class"
+                  >
+                    {{ getTemplateById(tid)?.protocol?.toUpperCase() || 'SLOT' }}
+                  </span>
                 </div>
-                <span class="text-[10px] font-mono uppercase px-2 py-0.5 rounded border shrink-0" :class="getProtoBadge(t.protocol).class">
-                  {{ t.protocol }}
-                </span>
-              </label>
+                <ChevronDown class="w-4 h-4 text-slate-400 shrink-0 transition-transform" :class="addDropdownOpen ? 'rotate-180' : ''" />
+              </div>
+
+              <div
+                v-if="addDropdownOpen"
+                class="absolute left-0 right-0 top-full mt-1.5 z-50 bg-slate-900 border border-slate-700/80 rounded-xl shadow-2xl p-1.5 max-h-48 overflow-y-auto space-y-1"
+              >
+                <label
+                  v-for="t in availableTemplates"
+                  :key="t.id"
+                  class="flex items-center justify-between px-3 py-2 rounded-lg hover:bg-slate-800 cursor-pointer text-xs"
+                >
+                  <div class="flex items-center space-x-2.5">
+                    <input
+                      type="checkbox"
+                      :value="t.id"
+                      v-model="addForm.template_ids"
+                      class="rounded bg-slate-950 border-slate-700 text-emerald-500 w-4 h-4 focus:ring-0"
+                    />
+                    <span class="font-mono font-bold text-slate-200">{{ t.protocol.toUpperCase() }}</span>
+                    <span class="font-mono text-slate-500">:{{ t.listen_port }}</span>
+                  </div>
+                  <span class="text-[11px] text-slate-400 truncate max-w-[140px]">{{ t.name }}</span>
+                </label>
+              </div>
             </div>
           </div>
 
@@ -562,44 +576,60 @@
             <p class="text-[11px] text-slate-500 mt-1">填写公网 IP 或域名，订阅下发时将以此地址作为连接目标</p>
           </div>
 
-          <!-- Inbound Templates Multi-Select for Edit Modal -->
-          <div class="space-y-2 pt-2 border-t border-slate-800">
+          <!-- Inbound Templates Multi-Select Dropdown for Edit Modal -->
+          <div class="space-y-1.5 pt-2 border-t border-slate-800">
             <div class="flex items-center justify-between">
               <label class="block text-xs font-semibold text-slate-200 uppercase tracking-wider">
-                挂载协议主模板 (多选)
+                挂载协议模板 (多选)
               </label>
               <span class="text-[11px] text-slate-500 font-mono">
                 已选 {{ editForm.template_ids.length }} / {{ availableTemplates.length }}
               </span>
             </div>
-            <p class="text-[11px] text-slate-500">勾选该主机启用的协议模板；端口与参数严格遵从主模板规则，子主机仅有勾选权。</p>
 
-            <div class="space-y-1.5 max-h-56 overflow-y-auto pr-1">
-              <label
-                v-for="t in availableTemplates"
-                :key="t.id"
-                class="flex items-center justify-between p-2.5 rounded-xl border cursor-pointer transition select-none"
-                :class="editForm.template_ids.includes(t.id)
-                  ? 'bg-slate-800/80 border-emerald-500/40 text-white'
-                  : 'bg-slate-950/40 border-slate-800/80 text-slate-400 hover:border-slate-700'"
+            <div class="relative">
+              <div
+                @click="editDropdownOpen = !editDropdownOpen"
+                class="min-h-[42px] px-3 py-1.5 rounded-xl bg-slate-950 border border-slate-800 hover:border-slate-700 cursor-pointer flex items-center justify-between gap-2 flex-wrap"
               >
-                <div class="flex items-center space-x-2.5 min-w-0">
-                  <input
-                    type="checkbox"
-                    :value="t.id"
-                    v-model="editForm.template_ids"
-                    class="rounded bg-slate-900 border-slate-700 text-emerald-500 w-4 h-4 focus:ring-0 shrink-0"
-                  />
-                  <div class="truncate text-xs">
-                    <span class="font-semibold text-slate-200">{{ t.name }}</span>
-                    <span class="text-slate-500 font-mono ml-2">:{{ t.listen_port }}</span>
-                    <span v-if="t.hy2_obfs_password" class="text-amber-400 text-[10px] ml-1.5">🛡混淆</span>
-                  </div>
+                <div class="flex items-center gap-1.5 flex-wrap">
+                  <span v-if="editForm.template_ids.length === 0" class="text-xs text-slate-500">
+                    请选择挂载协议模板...
+                  </span>
+                  <span
+                    v-for="tid in editForm.template_ids"
+                    :key="tid"
+                    class="px-2 py-0.5 rounded text-[11px] font-mono font-medium border"
+                    :class="getProtoBadge(getTemplateById(tid)?.protocol).class"
+                  >
+                    {{ getTemplateById(tid)?.protocol?.toUpperCase() || 'SLOT' }}
+                  </span>
                 </div>
-                <span class="text-[10px] font-mono uppercase px-2 py-0.5 rounded border shrink-0" :class="getProtoBadge(t.protocol).class">
-                  {{ t.protocol }}
-                </span>
-              </label>
+                <ChevronDown class="w-4 h-4 text-slate-400 shrink-0 transition-transform" :class="editDropdownOpen ? 'rotate-180' : ''" />
+              </div>
+
+              <div
+                v-if="editDropdownOpen"
+                class="absolute left-0 right-0 top-full mt-1.5 z-50 bg-slate-900 border border-slate-700/80 rounded-xl shadow-2xl p-1.5 max-h-48 overflow-y-auto space-y-1"
+              >
+                <label
+                  v-for="t in availableTemplates"
+                  :key="t.id"
+                  class="flex items-center justify-between px-3 py-2 rounded-lg hover:bg-slate-800 cursor-pointer text-xs"
+                >
+                  <div class="flex items-center space-x-2.5">
+                    <input
+                      type="checkbox"
+                      :value="t.id"
+                      v-model="editForm.template_ids"
+                      class="rounded bg-slate-950 border-slate-700 text-emerald-500 w-4 h-4 focus:ring-0"
+                    />
+                    <span class="font-mono font-bold text-slate-200">{{ t.protocol.toUpperCase() }}</span>
+                    <span class="font-mono text-slate-500">:{{ t.listen_port }}</span>
+                  </div>
+                  <span class="text-[11px] text-slate-400 truncate max-w-[140px]">{{ t.name }}</span>
+                </label>
+              </div>
             </div>
           </div>
 
@@ -639,7 +669,7 @@
 
 <script setup>
 import { ref, reactive, computed, onMounted, onUnmounted } from 'vue'
-import { Plus, Trash2, X, Copy, Terminal, Check, Sliders, Power, Eye, EyeOff, Globe, Users } from 'lucide-vue-next'
+import { Plus, Trash2, X, Copy, Terminal, Check, Sliders, Power, Eye, EyeOff, Globe, Users, ChevronDown } from 'lucide-vue-next'
 import { request, getToken, getUser } from '../api'
 import PageSkeleton from '../components/PageSkeleton.vue'
 import { usePageRead } from '../composables/usePageRead'
@@ -679,6 +709,12 @@ const tabs = [
 ]
 
 const availableTemplates = ref([])
+const addDropdownOpen = ref(false)
+const editDropdownOpen = ref(false)
+
+function getTemplateById(id) {
+  return availableTemplates.value.find(t => t.id === id)
+}
 
 async function loadTemplates() {
   try {
@@ -779,6 +815,7 @@ function formatUptime(seconds) {
   return `${mins}m`
 }
 function openAddModal() {
+  addDropdownOpen.value = false
   addForm.name = ''
   addForm.server_ip = ''
   addForm.owner_id = currentUser.value?.id || null
@@ -884,6 +921,7 @@ const editForm = reactive({
 })
 
 function openEditModal(node) {
+  editDropdownOpen.value = false
   editForm.id = node.id
   editForm.name = node.name
   editForm.server_ip = node.server_ip || ''
