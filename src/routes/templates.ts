@@ -23,7 +23,17 @@ templatesRoute.get('/api/v1/templates', authMiddleware, async (c) => {
   const templates = (await c.env.DB.prepare(`
     SELECT t.*
     FROM inbound_templates t
-    ORDER BY t.protocol ASC, t.id ASC
+    ORDER BY
+      t.is_default DESC,
+      CASE t.protocol
+        WHEN 'vless' THEN 1
+        WHEN 'hysteria2' THEN 2
+        WHEN 'tuic' THEN 3
+        WHEN 'trojan' THEN 4
+        WHEN 'anytls' THEN 5
+        ELSE 99
+      END ASC,
+      t.id ASC
   `).all<any>()).results;
   return c.json(templates);
 });
