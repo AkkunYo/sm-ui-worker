@@ -6,60 +6,51 @@
 - **新形态**：Master 控制面 100% 运行于 Cloudflare 边缘运行时，零服务器租金，自带全球 Anycast 高可用、顶级 DDoS 盾与免费 SSL。
 
 ## 2. 核心架构设计 (Architecture)
-1. **控制面 (Master)**：
-   - 框架：TypeScript + Hono
-   - 存储：Cloudflare D1 (分布式边缘 SQLite)
-   - 静态资源：Workers Static Assets 托管 Vue 3 仪表盘（SPA 路由降级）
-2. **主从通信 (方案 A: HTTP Pull Sync 轮询拉取)**：
-   - 各 VPS 节点运行轻量 Go 守护进程 (`agent/sm-node v2.1.0`)；
-   - 默认每 30 秒向 Master 发送 `POST /api/v2/node/sync`，上报状态、延迟、CPU、内存、Uptime 以及用户流量消耗增量；
-   - **单节点配置 Hash 判定**：Master 只按该节点自身配置内容的哈希 (`desired_config_hash`) 判定是否下发，修改其他租户或节点不会让本节点重载；
+1. **控制面 (Master)**：TypeScript + Hono；存储 Cloudflare D1 (`sm-ui-db`)；Workers Static Assets 托管 Vue 3 仪表盘（SPA 路由降级）。
+2. **主从通信 (HTTP Pull 轮询)**：
+   - 各 VPS 运行 Go 守护进程 `sm-node`，每 30 秒 `POST /api/v2/node/sync`（带 `X-Node-Token`），上报状态、RTT、CPU、内存、Uptime、`agent_version`、自签证书指纹与流量批次（单次最多 8 批）；
+   - **单节点配置哈希**：Master 只按该节点自身配置内容的哈希判定是否下发，修改其他租户或节点不会让本节点重载；
    - **租户级 Reality 密钥隔离**：每个租户独立一对 X25519 密钥，节点只收到所属租户的私钥；
-   - **Agent 状态持久化与回滚**：本地持久化 `agent-state.json`（待确认流量批次、期望状态、失败配置哈希与 10 分钟重试冷却）。应用新配置时先停止旧核心再启动新配置，经约 3 秒健康检查确认存活；启动失败则恢复并重启上一份配置，整个过程约 3~8 秒；
-   - **幂等流量收据**：流量批次按 `(node_id, batch_id)` 原子结算，重复提交只计一次；不属于节点所属租户的流量记录会被丢弃并记日志，批次照常确认出队，不会阻断配置下发。
-   - **版本一致**：`package.json` 的 `version` 是唯一版本来源，Worker (`src/version.ts`) 与 Agent (`scripts/build-agent.sh` 注入) 使用同一版本号；发布 tag 必须等于 `v<version>`。
-   - **优势**：无状态，规避 WebSocket 挂载时间限制，完全运行在 Cloudflare 免费版额度内，容错率极高。
-3. **多协议与端口跳跃**：
-   - 节点标准监听 2096/TCP (VLESS Reality) 与 2096/UDP (Hysteria 2)；
-   - Hysteria 2 端口跳跃依赖 VPS 上手工配置的 UDP 端口范围转发（iptables/nftables），项目只负责在订阅中输出跳跃端口，不管理转发规则；
-4. **全客户端自适应通用订阅**：
-   - 访问 `/sub/:username/:token` 或 `/sub/:token`，自动嗅探 User-Agent 或显式 `format=clash|singbox|base64`：
-     - Mihomo / Clash: YAML 配置 (含分流规则与 url-test 自动选线)
-     - Sing-box 1.11+: 官方原生 JSON 配置 (Hysteria 2 跳跃使用 `server_ports`，该字段自 1.11.0 起支持)
-     - 通用客户端: Base64 聚合链接 (兼容 NekoBox `mport` 规范)
-   - 附带 `Subscription-Userinfo` 头部，客户端实时显示已用与总流量。
+   - **Agent 状态持久化与回滚**：本地 `agent-state.json` 保存待确认流量批次、期望状态、已应用哈希与失败配置哈希（10 分钟重试冷却）。应用新配置时先停旧核心、再启新配置并做约 3 秒健康检查，失败则恢复上一份配置；
+   - **幂等流量收据**：流量批次按 `(node_id, batch_id)` 原子结算，重复提交只计一次；不属于节点所属租户的流量会被丢弃并记日志，批次照常确认出队。
+3. **协议与端口模型**：
+   - **1 个主模板 = 1 种协议 = 1 个端口**，不做端口跳跃；端口与参数只由管理员在主模板中修改，主机（含租户）只能勾选挂载哪些模板；
+   - 支持 VLESS Reality、Hysteria 2（可选 Salamander 混淆）、TUIC v5、Trojan Reality、AnyTLS；初始化默认模板为 `VLESS Reality` 与 `Hysteria 2`，均为 2096（TCP/UDP 共用）；
+   - Hy2 / TUIC / AnyTLS 使用节点自签证书 `certs/selfsigned.crt`，agent 上报其 DER 的 SHA-256 用于订阅锁定。
+4. **全客户端自适应订阅**：`/sub/:username/:token`（或 `/sub/:token`），嗅探 User-Agent 或显式 `format=clash|singbox|base64`；附带 `Subscription-Userinfo` 头。证书锁定按客户端能力区分：
+   - Clash / Mihomo：`fingerprint`（`skip-cert-verify` 保持 true，mihomo 设了 fingerprint 就只按哈希校验）；
+   - 通用链接：`pinSHA256` / `pcs`，不带 `allowInsecure`（新版 Xray 已拒绝）；`tuic://` 额外带 `allow_insecure=1`（NekoBox 只认这个参数名）；
+   - Sing-box JSON：保持 `insecure: true` 不锁定（NekoBox 内置 sing-box 1.12 不认识 `certificate_public_key_sha256`，且遇到未知字段会拒绝整个配置）。
+5. **节点单二进制**：`sm-node` 内嵌 gzip 压缩的 sing-box 核心（`with_quic,with_utls,with_clash_api,with_v2ray_api`），启动时按 SHA-256 校验并释放到 `bin/sing-box`，作为子进程守护；`127.0.0.1:8080` 为 `v2ray_api` 流量统计端口，只监听本地回环。
+6. **版本规则**：`package.json` 的 `version` 是唯一版本来源，格式 `<sing-box 版本>-<项目修订号>`（如 `1.14.3-1`）；sing-box 版本由此推导并注入核心（`sing-box version` 显示 `1.14.3`）。Git tag 与 Release 带 `v`（`v1.14.3-1`），镜像标签不带 `v`（`sm-node:1.14.3-1`）。Worker (`src/version.ts`) 与 agent 使用同一版本号。
+7. **节点安装**：`install.sh` 默认安装最新 Release，`SM_NODE_VERSION` 仅在需要指定版本时传入；面板生成的 docker run / compose 命令写死总控当前版本，避免长期使用的 compose 静默换版本。
 
-## 3. 代码库结构 (Codebase)
-- **根目录**：
-  - `wrangler.jsonc`: Cloudflare Worker 配置文件，声明 D1 绑定 `DB` (`sm-ui-db`) 与静态目录 `./web/dist`
-  - `schema.sql`: D1 SQLite 数据库表定义 (`system_settings`, `users`, `nodes`, `inbound_templates`)
-  - `package.json` / `tsconfig.json`: Root Worker 工程配置
+## 3. 发版与数据库变更 (Release & Migrations)
+- **发版顺序**：改 `package.json` / `package-lock.json` / `src/version.ts` → 提交并推送 → 推 tag `v<version>` → CI（校验 tag 与版本格式 → 前端单元测试与浏览器测试 → 编译双架构二进制与 Release → 推送镜像）→ **CI 完成后**再部署 Worker（否则面板 docker 命令会指向尚未构建的镜像）→ 节点先灰度一台，确认后逐台升级。
+- **数据库迁移**：结构变更写成 `migrations/NNNN_*.sql`，用 `wrangler d1 migrations apply sm-ui-db --remote` 执行（迁移记录表 `d1_migrations` 已补齐 0001–0009）。`schema.sql` 始终是最新完整结构，供全新安装使用。删除字段时先部署不再读写该字段的 Worker，确认心跳正常后再执行删列迁移。
+
+## 4. 代码库结构 (Codebase)
+- **根目录**：`wrangler.jsonc`（D1 绑定 `DB` → `sm-ui-db`，静态目录 `./web/dist`）、`schema.sql`、`migrations/`、`package.json`（唯一版本号）
 - **`src/` (Worker 后端)**：
-  - `index.ts`: Hono REST API 路由、Scheme A 同步接口、JWT 鉴权、各资源 CRUD、`/sub/:token` 订阅下发
-  - `keys.ts`: 基于 `@noble/curves` 的 RFC 7748 X25519 Reality 密钥对生成与 Token 生成
-  - `protocol.ts`: Sing-box 服务端完整配置生成器
-  - `subscription.ts`: 多格式订阅生成器
-  - `db.ts`: D1 数据库初始化与常用查询
+  - `index.ts`: Hono 入口，挂载 `routes/` 下的 auth、sync、nodes、templates、users、subscription 路由
+  - `routes/sync.ts`: 节点同步、流量结算、证书指纹校验入库
+  - `protocol.ts`: 服务端配置生成与订阅端点解析；`subscription.ts`: 三种订阅格式生成
+  - `repo/inbounds.ts`: 节点挂载模板查询；`lib/`: 加密、模板权限、租户密钥；`keys.ts`: X25519 密钥与 Token 生成
+  - `middleware/auth.ts`、`login-guard.ts`: JWT 鉴权与登录限流；`version.ts`: 版本号
 - **`web/` (Vue 3 前端)**：
-  - 路由：`/setup` (首次引导设置), `/` (仪表盘), `/nodes` (节点主机管理), `/inbounds` (协议模板), `/users` (用户管理), `/settings` (管理员密码)
-  - 核心交互：
-    - 主机列表左置电源开关图标（Power），实时控制停用/启用；
-    - 地址列眼睛图标（Eye）一键对全表 IP 模糊脱敏；
-    - 采集并展示系统真实 Uptime 运行时长；
-    - 入站模板提供 11 个推荐 SNI 预设弹窗（Amazon、Apple、Cloudflare 等），密钥与 Hy2 默认内置驱动；
-    - 用户 ID 1 锁定为系统初始管理员，前后端双重拦截防误删；已用流量紧凑展示为 `0 B / 无限制`。
-- **`agent/` (VPS 节点端)**：
-  - `main.go` / `core.go` / `state.go`: Go 编写的单二进制节点客户端，实现 HTTP Pull、进程守护、健康检查、安全回滚、系统指标采集
-  - `Dockerfile`: 多架构 Docker 镜像构建，预装带 `with_v2ray_api` 标签的官方 `sing-box v1.14.2`
-- **`scripts/install.sh`**: 原生 Linux Systemd 一键安装脚本
-- **`.github/workflows/release.yml`**: GitHub Actions 流水线，编译多架构二进制并推送 `ghcr.io/akkunyo/sm-node`
+  - 路由：`/setup`、`/login`、`/`（仪表盘）、`/nodes`、`/inbounds`（协议模板）、`/subscription`、`/users`（租户管理）、`/settings`（账号设置）
+  - 主机列表：电源开关、IP 脱敏、单一版本标签；主机弹窗以下拉多选挂载模板（只显示协议名）
+  - 协议模板：紧凑表格，默认模板置顶，仅管理员可修改
+  - 测试：`web/tests/api.test.js`（单元测试）、`web/tests/browser/`（Playwright 浏览器测试，CI 发版前执行）
+- **`agent/` (节点端)**：`main.go`（同步循环、指标采集、看门狗）、`core.go`（核心进程守护、健康检查、回滚）、`state.go`（状态持久化）、`embed_singbox.go`（内嵌核心释放）、`Dockerfile`（alpine 基础镜像，只拷贝 CI 编好的 `sm-node`）
+- **`scripts/`**：`install.sh`（Systemd 安装）、`build-agent.sh`（本地编译单二进制）、`prepare-deploy.js` / `validate-deploy-config.js`（生成并校验部署用 Wrangler 配置）
+- **`.github/workflows/release.yml`**：推送 `v*` tag 时触发，见第 3 节发版顺序
 
-## 4. 远程仓库与作者规范
-- **仓库地址**：`https://github.com/AkkunYo/sm-ui-worker`
+## 5. 远程仓库与作者规范
+- **仓库地址**：`https://github.com/AkkunYo/sm-ui-worker`（公开仓库）
 - **Git 规范**：全仓库严格遵循 Conventional Commits，作者及提交者统一为 `AkkunYo <945395054@qq.com>`，杜绝任何 Bot 或第三方污染。
 
-## 5. Cloudflare 部署步骤
-1. 在 Cloudflare 控制台创建 D1 数据库 `sm-ui-db`，在 Console 中执行 `schema.sql` 建表。
-2. 在 Workers & Pages 中绑定 GitHub 仓库 `AkkunYo/sm-ui-worker`，构建命令填 `npm run build`。
-3. 添加 D1 绑定：Variable 填 `DB`，对应数据库选择 `sm-ui-db`。
-4. 部署后访问分配的 Worker 域名即可进入使用。
+## 6. Cloudflare 部署步骤
+1. 在 Cloudflare 控制台创建 D1 数据库 `sm-ui-db`，执行 `schema.sql` 建表（全新安装）。
+2. 本地部署：`D1_DATABASE_ID=<数据库 ID> npm run deploy`（生成并校验 `.wrangler.generated.jsonc` 后发布；`wrangler.jsonc` 中的 `database_id` 保持占位符）。
+3. 首次访问域名，按引导完成管理员初始化。

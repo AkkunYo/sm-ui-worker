@@ -9,7 +9,7 @@ set -e
 #     MASTER_URL="https://sm-ui.your-worker.workers.dev" \
 #     NODE_TOKEN="<token>" \
 #     bash
-#   Pin a release: add SM_NODE_VERSION="v1.14.2-1" before "bash".
+#   Pin a release: add SM_NODE_VERSION="v1.14.3-1" before "bash".
 
 if [ -z "$MASTER_URL" ] || [ -z "$NODE_TOKEN" ]; then
   echo "Error: MASTER_URL and NODE_TOKEN environment variables are required."
@@ -28,7 +28,7 @@ else
   RELEASE_TAG="${RELEASE_TAG##*/}"
 fi
 if [[ ! "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+-[0-9]+$ ]]; then
-  echo "Error: \"${SM_NODE_VERSION:-$RELEASE_TAG}\" is not a valid sm-node release (expected e.g. v1.14.2-1)."
+  echo "Error: \"${SM_NODE_VERSION:-$RELEASE_TAG}\" is not a valid sm-node release (expected e.g. v1.14.3-1)."
   exit 1
 fi
 
