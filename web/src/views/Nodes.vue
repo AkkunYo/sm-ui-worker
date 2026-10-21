@@ -671,6 +671,9 @@
 import { ref, reactive, computed, onMounted, onUnmounted } from 'vue'
 import { Plus, Trash2, X, Copy, Terminal, Check, Sliders, Power, Eye, EyeOff, Globe, Users, ChevronDown } from 'lucide-vue-next'
 import { request, getToken, getUser } from '../api'
+// Controller version (no "v"), loaded by the router before any view renders;
+// install commands pin nodes to it so they always match the controller.
+import { appVersion } from '../router'
 import PageSkeleton from '../components/PageSkeleton.vue'
 import { usePageRead } from '../composables/usePageRead'
 const readPage = usePageRead()
@@ -753,7 +756,7 @@ const dockerRunCommand = computed(() => {
   -v ./data:/var/lib/sm-ui \\
   -e MASTER_URL="${masterUrl}" \\
   -e NODE_TOKEN="${token}" \\
-  ghcr.io/akkunyo/sm-node:latest`
+  ghcr.io/akkunyo/sm-node:${appVersion.value}`
 })
 
 const dockerComposeSnippet = computed(() => {
@@ -761,7 +764,7 @@ const dockerComposeSnippet = computed(() => {
   const token = activeInstructionNode.value?.token || ""
   return `services:
   sm-node:
-    image: ghcr.io/akkunyo/sm-node:latest
+    image: ghcr.io/akkunyo/sm-node:${appVersion.value}
     container_name: sm-node
     restart: always
     network_mode: "host"
@@ -778,6 +781,7 @@ const shellCommand = computed(() => {
   return `curl -fsSL https://raw.githubusercontent.com/AkkunYo/sm-ui-worker/main/scripts/install.sh | \\
   MASTER_URL="${masterUrl}" \\
   NODE_TOKEN="${token}" \\
+  SM_NODE_VERSION="v${appVersion.value}" \\
   bash`
 })
 

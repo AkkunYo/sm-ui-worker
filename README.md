@@ -83,8 +83,10 @@ docker run -d \
   -v ./data:/var/lib/sm-ui \
   -e MASTER_URL="https://sm-ui-worker.yourname.workers.dev" \
   -e NODE_TOKEN="<你的主机HostIdToken>" \
-  ghcr.io/akkunyo/sm-node:latest
+  ghcr.io/akkunyo/sm-node:<总控版本，如 1.14.2-1>
 ```
+
+> 推荐直接在面板「节点 → 安装」里复制命令，版本号会自动填成总控当前版本。镜像标签不带 `v`（如 `sm-node:1.14.2-1`），Git tag 与 Release 带 `v`（如 `v1.14.2-1`）。
 
 ### 方式二：原生 Systemd 服务安装 (免 Docker)
 
@@ -92,10 +94,11 @@ docker run -d \
 curl -fsSL https://raw.githubusercontent.com/AkkunYo/sm-ui-worker/main/scripts/install.sh | \
   MASTER_URL="https://sm-ui-worker.yourname.workers.dev" \
   NODE_TOKEN="<你的主机HostIdToken>" \
+  SM_NODE_VERSION="<总控版本，如 v1.14.2-1>" \
   bash
 ```
 
-启动后，VPS 节点将自动下载/就绪官方 `sing-box v1.14.2`，并在控制面板秒级亮起在线绿灯！
+`sm-node` 是单个二进制，已内置对应版本的 sing-box 核心（版本号前段即 sing-box 版本），启动后自动释放核心并连上总控，面板中对应主机即显示在线。
 
 ---
 
