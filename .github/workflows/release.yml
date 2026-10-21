@@ -42,10 +42,41 @@ jobs:
           echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
           echo "sing_box_version=${VERSION%%-*}" >> "$GITHUB_OUTPUT"
 
-  # 1. Compile self-contained sm-node multi-arch binaries (with embedded sing-box)
+  # 1. Release gate: the panel's unit and browser tests must pass before anything is built
+  web-tests:
+    name: Web Unit & Browser Tests
+    needs: version
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v7
+
+      - name: Setup Node
+        uses: actions/setup-node@v7
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci --no-audit --no-fund
+
+      - name: Unit tests
+        run: npm test
+
+      - name: Install Chromium for Playwright
+        run: npx playwright install --with-deps chromium
+
+      - name: Browser tests
+        run: npx playwright test
+
+  # 2. Compile self-contained sm-node multi-arch binaries (with embedded sing-box)
   build-agent-binaries:
     name: Build & Release Node Binaries
-    needs: version
+    needs: [version, web-tests]
     runs-on: ubuntu-24.04
     steps:
       - name: Checkout Code
@@ -103,7 +134,7 @@ jobs:
           prerelease: false
           generate_release_notes: true
 
-  # 2. Package and publish multi-arch sm-node docker image (seconds, no QEMU emulation)
+  # 3. Package and publish multi-arch sm-node docker image (seconds, no QEMU emulation)
   publish-container:
     name: Build & Publish Node Container
     needs: [version, build-agent-binaries]
