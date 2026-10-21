@@ -94,9 +94,10 @@ docker run -d \
 curl -fsSL https://raw.githubusercontent.com/AkkunYo/sm-ui-worker/main/scripts/install.sh | \
   MASTER_URL="https://sm-ui-worker.yourname.workers.dev" \
   NODE_TOKEN="<你的主机HostIdToken>" \
-  SM_NODE_VERSION="<总控版本，如 v1.14.2-1>" \
   bash
 ```
+
+默认安装最新版本。如需指定版本，在 `bash` 前加上 `SM_NODE_VERSION="v1.14.2-1"`（带不带 `v` 均可）。
 
 `sm-node` 是单个二进制，已内置对应版本的 sing-box 核心（版本号前段即 sing-box 版本），启动后自动释放核心并连上总控，面板中对应主机即显示在线。
 

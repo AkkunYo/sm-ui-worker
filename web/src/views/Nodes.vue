@@ -672,7 +672,7 @@ import { ref, reactive, computed, onMounted, onUnmounted } from 'vue'
 import { Plus, Trash2, X, Copy, Terminal, Check, Sliders, Power, Eye, EyeOff, Globe, Users, ChevronDown } from 'lucide-vue-next'
 import { request, getToken, getUser } from '../api'
 // Controller version (no "v"), loaded by the router before any view renders;
-// install commands pin nodes to it so they always match the controller.
+// the docker install commands pin the image to it.
 import { appVersion } from '../router'
 import PageSkeleton from '../components/PageSkeleton.vue'
 import { usePageRead } from '../composables/usePageRead'
@@ -781,7 +781,6 @@ const shellCommand = computed(() => {
   return `curl -fsSL https://raw.githubusercontent.com/AkkunYo/sm-ui-worker/main/scripts/install.sh | \\
   MASTER_URL="${masterUrl}" \\
   NODE_TOKEN="${token}" \\
-  SM_NODE_VERSION="v${appVersion.value}" \\
   bash`
 })
 

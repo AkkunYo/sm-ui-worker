@@ -2,25 +2,33 @@
 set -e
 
 # SM-UI Worker Node Installer (Systemd Service)
-# Copy the ready-made command from the controller panel; it fills in all three
-# values, and SM_NODE_VERSION pins the node to the controller's version.
+# Installs the latest sm-node release by default. Set SM_NODE_VERSION only to
+# pin a specific release (with or without the "v" prefix).
 # Usage:
 #   curl -fsSL https://raw.githubusercontent.com/AkkunYo/sm-ui-worker/main/scripts/install.sh | \
 #     MASTER_URL="https://sm-ui.your-worker.workers.dev" \
 #     NODE_TOKEN="<token>" \
-#     SM_NODE_VERSION="v1.14.2-1" \
 #     bash
+#   Pin a release: add SM_NODE_VERSION="v1.14.2-1" before "bash".
 
-if [ -z "$MASTER_URL" ] || [ -z "$NODE_TOKEN" ] || [ -z "$SM_NODE_VERSION" ]; then
-  echo "Error: MASTER_URL, NODE_TOKEN and SM_NODE_VERSION environment variables are required."
+if [ -z "$MASTER_URL" ] || [ -z "$NODE_TOKEN" ]; then
+  echo "Error: MASTER_URL and NODE_TOKEN environment variables are required."
   echo "Copy the install command from the controller panel (Nodes -> install)."
   exit 1
 fi
 
-# Release tags carry the "v" prefix; accept the version with or without it.
-RELEASE_TAG="v${SM_NODE_VERSION#v}"
+REPO="AkkunYo/sm-ui-worker"
+if [ -n "${SM_NODE_VERSION:-}" ]; then
+  # Release tags carry the "v" prefix; accept the version with or without it.
+  RELEASE_TAG="v${SM_NODE_VERSION#v}"
+else
+  # /releases/latest redirects to /releases/tag/<latest tag>
+  RELEASE_TAG=$(curl -fsSLI -o /dev/null -w '%{url_effective}' "https://github.com/${REPO}/releases/latest") \
+    || { echo "Error: cannot reach GitHub to resolve the latest sm-node release."; exit 1; }
+  RELEASE_TAG="${RELEASE_TAG##*/}"
+fi
 if [[ ! "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+-[0-9]+$ ]]; then
-  echo "Error: SM_NODE_VERSION \"$SM_NODE_VERSION\" is not a valid version (expected e.g. v1.14.2-1)."
+  echo "Error: \"${SM_NODE_VERSION:-$RELEASE_TAG}\" is not a valid sm-node release (expected e.g. v1.14.2-1)."
   exit 1
 fi
 
@@ -37,7 +45,7 @@ DATA_DIR="/var/lib/sm-ui"
 mkdir -p "$DATA_DIR/bin" "$DATA_DIR/configs" "$DATA_DIR/certs"
 
 echo "--> Installing sm-node ${RELEASE_TAG} (with embedded sing-box core)..."
-if ! curl -fsSL "https://github.com/AkkunYo/sm-ui-worker/releases/download/${RELEASE_TAG}/sm-node-linux-${GOARCH}.tar.gz" -o /tmp/node.tar.gz; then
+if ! curl -fsSL "https://github.com/${REPO}/releases/download/${RELEASE_TAG}/sm-node-linux-${GOARCH}.tar.gz" -o /tmp/node.tar.gz; then
   echo "Error: release ${RELEASE_TAG} not found. Copy a fresh install command from the controller panel."
   exit 1
 fi
