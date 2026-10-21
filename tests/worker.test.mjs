@@ -4,6 +4,7 @@ import { readFileSync } from 'node:fs';
 import { build } from 'esbuild';
 import { Miniflare } from 'miniflare';
 import { sign } from 'hono/jwt';
+import { parse as parseYaml } from 'yaml';
 
 let mf, db;
 const secret = 'integration-test-secret-at-least-32-bytes';
@@ -244,15 +245,63 @@ test('user input validation enforces non-negative integer quotas and valid ISO d
 });
 test('node reports cert_sha256 which is locked into hysteria2 and tuic subscriptions', async () => {
   const fakeFingerprint = 'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855';
-  await sync({ cert_sha256: fakeFingerprint });
+  await sync({ cert_sha256: fakeFingerprint.toUpperCase() });
   const rowNode = await row('SELECT cert_sha256 FROM nodes WHERE id=1');
   assert.equal(rowNode.cert_sha256, fakeFingerprint);
 
   await sql("INSERT INTO node_inbounds(node_id,template_id) VALUES(1,2)");
   const subRes = await mf.dispatchFetch('https://test.local/sub/alice/sub-2?format=base64');
   const uris = Buffer.from(await subRes.text(), 'base64').toString('utf8');
-  assert.match(uris, /pinSHA256=e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855/);
-  assert.match(uris, /pcs=e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855/);
+  const hy2Uri = uris.split('\n').find(u => u.startsWith('hysteria2://'));
+  assert.match(hy2Uri, /pinSHA256=e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855/);
+  assert.match(hy2Uri, /pcs=e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855/);
+  assert.match(hy2Uri, /[?&]insecure=1/);
+  assert.doesNotMatch(hy2Uri, /allowInsecure/);
+
+  const clash = parseYaml(await (await mf.dispatchFetch('https://test.local/sub/alice/sub-2?format=clash')).text());
+  const clashHy2 = clash.proxies.find(p => p.type === 'hysteria2');
+  assert.equal(clashHy2.fingerprint, fakeFingerprint);
+  assert.equal(clashHy2['skip-cert-verify'], true);
+
+  // sing-box JSON stays insecure: NekoBox's 1.12 core rejects certificate_public_key_sha256
+  const sb = await (await mf.dispatchFetch('https://test.local/sub/alice/sub-2?format=singbox')).json();
+  const sbHy2 = sb.outbounds.find(o => o.type === 'hysteria2');
+  assert.deepEqual(sbHy2.tls, { enabled: true, server_name: sbHy2.tls.server_name, insecure: true });
+});
+test('malformed cert_sha256 is dropped and subscriptions fall back to unpinned insecure', async () => {
+  await sync({ cert_sha256: 'not-a-sha256-fingerprint' });
+  assert.equal((await row('SELECT cert_sha256 FROM nodes WHERE id=1')).cert_sha256, '');
+
+  await sql("INSERT INTO node_inbounds(node_id,template_id) VALUES(1,2)");
+  const uris = Buffer.from(await (await mf.dispatchFetch('https://test.local/sub/alice/sub-2?format=base64')).text(), 'base64').toString('utf8');
+  const hy2Uri = uris.split('\n').find(u => u.startsWith('hysteria2://'));
+  assert.match(hy2Uri, /insecure=1&allowInsecure=1/);
+  assert.doesNotMatch(hy2Uri, /pinSHA256|pcs=/);
+  const clash = parseYaml(await (await mf.dispatchFetch('https://test.local/sub/alice/sub-2?format=clash')).text());
+  assert.equal(clash.proxies.find(p => p.type === 'hysteria2').fingerprint, undefined);
+
+  // A later malformed report must not wipe a previously stored valid pin
+  const valid = 'a'.repeat(64);
+  await sync({ cert_sha256: valid });
+  await sync({ cert_sha256: 'zz' });
+  assert.equal((await row('SELECT cert_sha256 FROM nodes WHERE id=1')).cert_sha256, valid);
+});
+test('clash subscription types anytls correctly and pins tuic and anytls by fingerprint', async () => {
+  const fp = 'b'.repeat(64);
+  await sync({ cert_sha256: fp });
+  await sql("INSERT INTO inbound_templates(id,name,protocol,listen_port) VALUES(10,'TUIC','tuic',8443),(12,'AnyTLS','anytls',10443)");
+  await sql("INSERT INTO node_inbounds(node_id,template_id) VALUES(1,10),(1,12)");
+
+  const clash = parseYaml(await (await mf.dispatchFetch('https://test.local/sub/alice/sub-2?format=clash')).text());
+  const anytls = clash.proxies.find(p => p.name.includes('AnyTLS'));
+  assert.equal(anytls.type, 'anytls');
+  assert.equal(anytls.fingerprint, fp);
+  assert.equal(clash.proxies.find(p => p.type === 'tuic').fingerprint, fp);
+
+  const uris = Buffer.from(await (await mf.dispatchFetch('https://test.local/sub/alice/sub-2?format=base64')).text(), 'base64').toString('utf8');
+  const tuicUri = uris.split('\n').find(u => u.startsWith('tuic://'));
+  assert.match(tuicUri, new RegExp(`pcs=${fp}`));
+  assert.doesNotMatch(tuicUri, /allowInsecure/);
 });
 test('hysteria2 with salamander obfs configures server and injects into subscriptions', async () => {
   await sql("UPDATE inbound_templates SET hy2_obfs_password='secret-obfs-pwd' WHERE id=2");

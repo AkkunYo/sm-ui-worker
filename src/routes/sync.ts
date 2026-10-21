@@ -8,6 +8,15 @@ import type { AppBindings, AppVariables } from '../types';
 const MAX_DELTA_BYTES = 500 * 1024 * 1024 * 1024;
 const MAX_TRAFFIC_DELTAS = 256;
 
+// The cert pin is embedded verbatim into client configs, and mihomo rejects the
+// whole profile on one malformed fingerprint, so anything off-format is dropped.
+const CERT_SHA256_HEX = /^[0-9a-f]{64}$/;
+
+function normalizeCertSha256(value: unknown): string {
+  const v = typeof value === 'string' ? value.trim().toLowerCase() : '';
+  return CERT_SHA256_HEX.test(v) ? v : '';
+}
+
 type SyncNode = NodeRecord & {
   owner_id: number;
   desired_state: string;
@@ -129,7 +138,7 @@ syncRoute.post('/api/v2/node/sync', async (c) => {
   const reportedStatus = node.desired_state === 'active' && ['online', 'offline'].includes(requestedStatus) ? requestedStatus : 'disabled';
   const appliedHash = typeof body.applied_config_hash === 'string' ? body.applied_config_hash.trim().slice(0, 128) : '';
   const applyError = typeof body.apply_error === 'string' ? body.apply_error.slice(0, 1000) : '';
-  const certSha256 = typeof body.cert_sha256 === 'string' ? body.cert_sha256.trim().slice(0, 64).toLowerCase() : '';
+  const certSha256 = normalizeCertSha256(body.cert_sha256);
 
   await c.env.DB.prepare(`
     UPDATE nodes SET

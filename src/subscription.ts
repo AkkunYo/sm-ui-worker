@@ -42,6 +42,10 @@ function toClashProxy(ep: ResolvedEndpoint) {
     };
   }
 
+  // mihomo 设了 fingerprint 就只按证书哈希校验（与 skip-cert-verify 无关）；
+  // 不认识该字段的客户端则维持原有的 skip-cert-verify 行为
+  const pin = ep.certSha256 ? { fingerprint: ep.certSha256 } : {};
+
   if (ep.protocol === 'tuic') {
     return {
       name: ep.name,
@@ -53,11 +57,26 @@ function toClashProxy(ep: ResolvedEndpoint) {
       alpn: ['h3'],
       'congestion-controller': ep.tuicCongestionControl || 'bbr',
       'skip-cert-verify': true,
-      sni: ep.sni || ep.server
+      sni: ep.sni || ep.server,
+      ...pin
     };
   }
 
-  // hysteria2 (and any other UDP/QUIC fallbacks)
+  if (ep.protocol === 'anytls') {
+    return {
+      name: ep.name,
+      type: 'anytls',
+      server: ep.server,
+      port: ep.port,
+      password: ep.password,
+      sni: ep.sni || ep.server,
+      'skip-cert-verify': true,
+      udp: true,
+      ...pin
+    };
+  }
+
+  // hysteria2
   const base: any = {
     name: ep.name,
     type: 'hysteria2',
@@ -67,7 +86,8 @@ function toClashProxy(ep: ResolvedEndpoint) {
     sni: ep.sni,
     'skip-cert-verify': true,
     up: `${ep.upMbps || 100} Mbps`,
-    down: `${ep.downMbps || 100} Mbps`
+    down: `${ep.downMbps || 100} Mbps`,
+    ...pin
   };
 
   if (ep.hy2ObfsPassword) {
@@ -179,6 +199,17 @@ function toSingBoxOutbound(ep: ResolvedEndpoint) {
 }
 
 /**
+ * 自签证书 URI 校验参数：有证书哈希时用 pinSHA256（hysteria2）/ pcs（Xray）锁定，
+ * 并去掉新版 Xray 已拒绝的 allowInsecure；insecure=1 保留给 hysteria2 跳过 CA 校验，
+ * 其锁定检查照常执行
+ */
+function uriCertParams(ep: ResolvedEndpoint): string {
+  if (!ep.certSha256) return '&insecure=1&allowInsecure=1';
+  const pin = encodeURIComponent(ep.certSha256);
+  return `&insecure=1&pinSHA256=${pin}&pcs=${pin}`;
+}
+
+/**
  * 序列化为标准协议 URI 字符串
  */
 export function toUriString(ep: ResolvedEndpoint): string {
@@ -193,11 +224,7 @@ export function toUriString(ep: ResolvedEndpoint): string {
   }
 
   if (ep.protocol === 'tuic') {
-    let pinParams = '';
-    if (ep.certSha256) {
-      pinParams = `&pinSHA256=${encodeURIComponent(ep.certSha256)}&pcs=${encodeURIComponent(ep.certSha256)}`;
-    }
-    return `tuic://${ep.uuid}:${encodeURIComponent(ep.password || '')}@${ep.server}:${ep.port}?alpn=h3&congestion_control=${encodeURIComponent(ep.tuicCongestionControl || 'bbr')}&insecure=1&allowInsecure=1&sni=${encodeURIComponent(ep.sni || ep.server)}${pinParams}#${remark}`;
+    return `tuic://${ep.uuid}:${encodeURIComponent(ep.password || '')}@${ep.server}:${ep.port}?alpn=h3&congestion_control=${encodeURIComponent(ep.tuicCongestionControl || 'bbr')}${uriCertParams(ep)}&sni=${encodeURIComponent(ep.sni || ep.server)}#${remark}`;
   }
 
   if (ep.protocol === 'anytls') {
@@ -205,15 +232,11 @@ export function toUriString(ep: ResolvedEndpoint): string {
   }
 
   // hysteria2
-  let extraParams = '';
-  if (ep.hy2ObfsPassword) {
-    extraParams += `&obfs=salamander&obfs-password=${encodeURIComponent(ep.hy2ObfsPassword)}`;
-  }
-  if (ep.certSha256) {
-    extraParams += `&pinSHA256=${encodeURIComponent(ep.certSha256)}&pcs=${encodeURIComponent(ep.certSha256)}`;
-  }
+  const obfsParams = ep.hy2ObfsPassword
+    ? `&obfs=salamander&obfs-password=${encodeURIComponent(ep.hy2ObfsPassword)}`
+    : '';
 
-  return `hysteria2://${encodeURIComponent(ep.password || '')}@${ep.server}:${ep.port}?alpn=h3&insecure=1&allowInsecure=1&sni=${encodeURIComponent(ep.sni || ep.server)}&upmbps=${ep.upMbps || 100}&downmbps=${ep.downMbps || 100}${extraParams}#${remark}`;
+  return `hysteria2://${encodeURIComponent(ep.password || '')}@${ep.server}:${ep.port}?alpn=h3${uriCertParams(ep)}&sni=${encodeURIComponent(ep.sni || ep.server)}&upmbps=${ep.upMbps || 100}&downmbps=${ep.downMbps || 100}${obfsParams}#${remark}`;
 }
 
 export function buildSubscription(
