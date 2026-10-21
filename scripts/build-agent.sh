@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# Build the self-contained fat binary sm-node embedding sing-box v1.14.2
-# with with_v2ray_api, with_quic, with_utls, with_clash_api.
+# Build the self-contained fat binary sm-node embedding sing-box (with_quic,
+# with_utls, with_clash_api, with_v2ray_api). The sing-box version comes from
+# package.json, whose version is <sing-box version>-<revision> (e.g. 1.14.2-1).
 # Output: dist-agent/sm-node-linux-{amd64,arm64}
 set -euo pipefail
 
@@ -8,7 +9,11 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 
 VERSION="$(node -p "require('./package.json').version")"
-SING_BOX_VERSION="1.14.2"
+if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+-[0-9]+$ ]]; then
+  echo "[build-agent] package.json version ${VERSION} must be <sing-box version>-<revision>" >&2
+  exit 1
+fi
+SING_BOX_VERSION="${VERSION%%-*}"
 COMMIT="$(git rev-parse --short HEAD)"
 if ! git diff --quiet HEAD -- agent || [ -n "$(git ls-files --others --exclude-standard -- agent)" ]; then
   COMMIT="${COMMIT}-dirty"
@@ -30,7 +35,7 @@ mkdir -p dist-agent dist/amd64 dist/arm64
 
 for arch in amd64 arm64; do
   echo "--> Compiling sing-box core for linux/${arch}..."
-  (cd "$TMP_DIR/sing-box-src" && CGO_ENABLED=0 GOOS=linux GOARCH="$arch" go build -trimpath -ldflags="-s -w -buildid=" -tags "with_quic,with_utls,with_clash_api,with_v2ray_api" -o "$TMP_DIR/sing-box-${arch}" ./cmd/sing-box)
+  (cd "$TMP_DIR/sing-box-src" && CGO_ENABLED=0 GOOS=linux GOARCH="$arch" go build -trimpath -ldflags="-s -w -buildid= -X 'github.com/sagernet/sing-box/constant.Version=${SING_BOX_VERSION}'" -tags "with_quic,with_utls,with_clash_api,with_v2ray_api" -o "$TMP_DIR/sing-box-${arch}" ./cmd/sing-box)
 
   echo "--> Embedding sing-box into sm-node for linux/${arch}..."
   gzip -c "$TMP_DIR/sing-box-${arch}" > "$ROOT/agent/sing-box.gz"

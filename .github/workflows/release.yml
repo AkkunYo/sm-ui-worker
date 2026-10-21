@@ -12,7 +12,6 @@ permissions:
 env:
   REGISTRY: ghcr.io
   IMAGE_NAME: akkunyo/sm-node
-  SING_BOX_VERSION: "1.14.2"
   GOTOOLCHAIN: auto
 
 jobs:
@@ -22,6 +21,7 @@ jobs:
     runs-on: ubuntu-24.04
     outputs:
       version: ${{ steps.check.outputs.version }}
+      sing_box_version: ${{ steps.check.outputs.sing_box_version }}
     steps:
       - name: Checkout Code
         uses: actions/checkout@v7
@@ -34,7 +34,13 @@ jobs:
             echo "::error::Tag ${GITHUB_REF_NAME} does not match package.json version v${VERSION}"
             exit 1
           fi
+          # Version scheme: <sing-box version>-<project revision>, e.g. 1.14.2-1
+          if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+-[0-9]+$ ]]; then
+            echo "::error::package.json version ${VERSION} must be <sing-box version>-<revision>"
+            exit 1
+          fi
           echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "sing_box_version=${VERSION%%-*}" >> "$GITHUB_OUTPUT"
 
   # 1. Compile self-contained sm-node multi-arch binaries (with embedded sing-box)
   build-agent-binaries:
@@ -53,6 +59,8 @@ jobs:
           cache-dependency-path: agent/go.sum
 
       - name: Compile sing-box core and embed into sm-node
+        env:
+          SING_BOX_VERSION: ${{ needs.version.outputs.sing_box_version }}
         run: |
           mkdir -p dist/amd64 dist/arm64 release-assets
           BUILD_TIME=$(date -u +%Y-%m-%dT%H:%M:%SZ)
@@ -63,7 +71,7 @@ jobs:
 
           for arch in amd64 arm64; do
             echo "--> Compiling sing-box core for linux/${arch}..."
-            (cd /tmp/sing-box-src && CGO_ENABLED=0 GOOS=linux GOARCH="$arch" go build -trimpath -ldflags="-s -w -buildid=" -tags "with_quic,with_utls,with_clash_api,with_v2ray_api" -o "/tmp/sing-box-${arch}" ./cmd/sing-box)
+            (cd /tmp/sing-box-src && CGO_ENABLED=0 GOOS=linux GOARCH="$arch" go build -trimpath -ldflags="-s -w -buildid= -X 'github.com/sagernet/sing-box/constant.Version=${SING_BOX_VERSION}'" -tags "with_quic,with_utls,with_clash_api,with_v2ray_api" -o "/tmp/sing-box-${arch}" ./cmd/sing-box)
 
             echo "--> Embedding sing-box into sm-node for linux/${arch}..."
             gzip -c "/tmp/sing-box-${arch}" > agent/sing-box.gz
@@ -128,9 +136,9 @@ jobs:
         uses: docker/metadata-action@v6
         with:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          # Git tags and releases carry the "v" prefix; image tags do not (sm-node:1.14.2-1)
           tags: |
             type=raw,value=latest
-            type=ref,event=tag
             type=semver,pattern={{version}}
 
       - name: Build and push multi-arch image
