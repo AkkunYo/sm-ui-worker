@@ -200,6 +200,18 @@ test('template management is strictly adminOnly and tenants are rejected', async
   res = await request('/api/v1/templates', { name: 'admin-created', protocol: 'tuic', listen_port: 8443 }, 1);
   assert.equal(res.status, 200);
 });
+test('template list puts default templates first, then orders by protocol vless, hysteria2, tuic, trojan, anytls', async () => {
+  await sql('DELETE FROM node_inbounds');
+  await sql('DELETE FROM inbound_templates');
+  for (const [id, protocol, isDefault] of [[1,'trojan',0],[2,'vless',1],[3,'tuic',0],[4,'anytls',0],[5,'vless',0],[6,'hysteria2',1],[7,'vless',0]]) {
+    await sql('INSERT INTO inbound_templates(id,name,protocol,listen_port,is_default) VALUES(?,?,?,2096,?)', id, `t-${id}`, protocol, isDefault);
+  }
+  const res = await request('/api/v1/templates', undefined, 2, 'GET');
+  assert.equal(res.status, 200);
+  const list = await res.json();
+  assert.deepEqual(list.map(t => t.id), [2, 6, 5, 7, 3, 1, 4]);
+  assert.deepEqual(list.map(t => t.protocol), ['vless', 'hysteria2', 'vless', 'vless', 'tuic', 'trojan', 'anytls']);
+});
 test('admin preview edits selected tenant, tenants cannot raise own quotas',async()=>{
   const denied=await request('/api/v1/subscription',{traffic_limit_bytes:999},2,'PUT');
   assert.equal(denied.status,403);
