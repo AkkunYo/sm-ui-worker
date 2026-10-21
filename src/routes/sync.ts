@@ -146,7 +146,7 @@ syncRoute.post('/api/v2/node/sync', async (c) => {
       address_locked = CASE WHEN TRIM(COALESCE(server_ip, '')) = '' AND ? <> '' THEN 1 ELSE address_locked END,
       cert_sha256 = CASE WHEN ? <> '' THEN ? ELSE cert_sha256 END,
       last_heartbeat_at = ?, rtt_ms = ?, cpu_percent = ?, memory_percent = ?, uptime_seconds = ?,
-      core_version = ?, agent_version = ?,
+      agent_version = ?,
       updated_at = datetime('now')
     WHERE id = ?
   `).bind(
@@ -159,7 +159,6 @@ syncRoute.post('/api/v2/node/sync', async (c) => {
     Number.isFinite(Number(body.cpu_percent)) ? Number(body.cpu_percent) : 0,
     Number.isFinite(Number(body.memory_percent)) ? Number(body.memory_percent) : 0,
     Number.isFinite(Number(body.uptime_seconds)) ? Number(body.uptime_seconds) : 0,
-    typeof body.core_version === 'string' ? body.core_version.slice(0, 64) : 'unknown',
     typeof body.agent_version === 'string' ? body.agent_version.slice(0, 64) : '',
     node.id
   ).run();

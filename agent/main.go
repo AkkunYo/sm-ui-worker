@@ -50,7 +50,6 @@ type SyncRequest struct {
 	CPUPercent           float64        `json:"cpu_percent"`
 	MemoryPercent        float64        `json:"memory_percent"`
 	UptimeSeconds        int64          `json:"uptime_seconds"`
-	CoreVersion          string         `json:"core_version"`
 	AgentVersion         string         `json:"agent_version,omitempty"`
 	AppliedConfigVersion int            `json:"applied_config_version"`
 	AppliedConfigHash    string         `json:"applied_config_hash,omitempty"`
@@ -307,7 +306,6 @@ func syncWithMaster(cfg Config, currentVer int, stateStore *StateStore) int {
 		CPUPercent:           readCPUPercent(),
 		MemoryPercent:        readMemPercent(),
 		UptimeSeconds:        readSystemUptime(),
-		CoreVersion:          "v1.14.2",
 		AgentVersion:         Version,
 		AppliedConfigVersion: state.AppliedConfigVersion,
 		AppliedConfigHash:    state.AppliedConfigHash,

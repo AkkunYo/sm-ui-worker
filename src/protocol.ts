@@ -47,7 +47,6 @@ export interface NodeRecord {
   server_ip: string;
   token: string;
   status: string;
-  core_version?: string;
   agent_version?: string;
   cert_sha256?: string;
   used_up_bytes?: number;

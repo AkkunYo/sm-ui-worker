@@ -40,7 +40,6 @@ CREATE TABLE IF NOT EXISTS nodes (
   uptime_seconds INTEGER DEFAULT 0,
   used_up_bytes INTEGER DEFAULT 0,
   used_down_bytes INTEGER DEFAULT 0,
-  core_version TEXT DEFAULT 'v1.14.2',
   agent_version TEXT DEFAULT '',
   desired_state TEXT NOT NULL DEFAULT 'active',
   revoked_at TEXT,

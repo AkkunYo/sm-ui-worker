@@ -199,7 +199,7 @@
                 </div>
 
                 <div class="text-[10px] text-slate-500 font-mono mt-1 flex items-center space-x-1">
-                  <span class="text-slate-400">v{{ (node.agent_version || node.core_version || '').replace(/^v/, '') || '—' }}</span>
+                  <span class="text-slate-400">{{ node.agent_version ? `v${node.agent_version.replace(/^v/, '')}` : '—' }}</span>
                 </div>
               </td>
 
@@ -798,11 +798,6 @@ async function toggleNodePower(node) {
   } finally {
     togglingId.value = null
   }
-}
-
-function displayCoreVersion(version) {
-  if (!version || version === 'latest') return '—'
-  return `v${version.replace(/^v/, '')}`
 }
 
 function formatUptime(seconds) {

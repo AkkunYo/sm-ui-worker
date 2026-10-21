@@ -158,6 +158,13 @@ test('controller reports the package.json version that the agent build also stam
   assert.equal(status.version, pkg.version);
   assert.equal(status.protocol_version, heartbeat.protocol_version);
 });
+test('agents still on 1.14.2-1 may send core_version; it is ignored and agent_version is stored', async () => {
+  const res = await sync({ core_version: 'v1.14.2', agent_version: '1.14.2-1' });
+  assert.equal(res.status, 200);
+  const node = await row('SELECT * FROM nodes WHERE id=1');
+  assert.equal(node.agent_version, '1.14.2-1');
+  assert.equal('core_version' in node, false);
+});
 test('explicit format wins over User Agent and subscription credentials stay unchanged',async()=>{
   const res=await mf.dispatchFetch('https://test.local/sub/alice/sub-2?format=singbox',{headers:{'User-Agent':'Clash'}});
   assert.equal(res.status,200);
