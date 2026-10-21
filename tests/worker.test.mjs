@@ -309,6 +309,8 @@ test('clash subscription types anytls correctly and pins tuic and anytls by fing
   const tuicUri = uris.split('\n').find(u => u.startsWith('tuic://'));
   assert.match(tuicUri, new RegExp(`pcs=${fp}`));
   assert.doesNotMatch(tuicUri, /allowInsecure/);
+  // NekoBox's tuic:// parser only reads allow_insecure
+  assert.match(tuicUri, /[?&]allow_insecure=1/);
 });
 test('hysteria2 with salamander obfs configures server and injects into subscriptions', async () => {
   await sql("UPDATE inbound_templates SET hy2_obfs_password='secret-obfs-pwd' WHERE id=2");

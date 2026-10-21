@@ -224,7 +224,8 @@ export function toUriString(ep: ResolvedEndpoint): string {
   }
 
   if (ep.protocol === 'tuic') {
-    return `tuic://${ep.uuid}:${encodeURIComponent(ep.password || '')}@${ep.server}:${ep.port}?alpn=h3&congestion_control=${encodeURIComponent(ep.tuicCongestionControl || 'bbr')}${uriCertParams(ep)}&sni=${encodeURIComponent(ep.sni || ep.server)}#${remark}`;
+    // NekoBox 的 tuic:// 解析只认 allow_insecure，不加会对自签证书严格校验而连不上
+    return `tuic://${ep.uuid}:${encodeURIComponent(ep.password || '')}@${ep.server}:${ep.port}?alpn=h3&congestion_control=${encodeURIComponent(ep.tuicCongestionControl || 'bbr')}${uriCertParams(ep)}&allow_insecure=1&sni=${encodeURIComponent(ep.sni || ep.server)}#${remark}`;
   }
 
   if (ep.protocol === 'anytls') {
