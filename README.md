@@ -36,14 +36,19 @@
    * 进入 **Settings** -> **Builds** (构建) -> 点击 **Connect to Git** 绑定 `AkkunYo/sm-ui-worker` 仓库。
    * 构建设置：
      * **Build command**：`npm run build`
-     * **Deploy command**：`npx wrangler deploy`
+     * **Deploy command**：`node scripts/validate-deploy-config.js && npx wrangler deploy --config .wrangler.generated.jsonc`
      * **Root directory**：`/`
+     * **Build variables**：添加 `D1_DATABASE_ID`，填入 `sm-ui-db` 的真实数据库 ID
 3. **绑定 D1 数据库**：
    进入 Worker 项目设置 **Settings** -> **Bindings** -> 确认已有或添加 D1 绑定：
    * **Variable name**：`DB`
    * **D1 database**：选择 `sm-ui-db`
 4. **一键自动持续交付**：
    后续本地任意 `git push origin main`，Cloudflare 云端原生容器秒级拉取、构建前端 Vue 3 SPA 并部署上线。彻底免去任何 Cloudflare API Token 与 GitHub Secrets 配置，纯净开源安全！
+
+   > **注意**：
+   > 1. push `main` 即触发上线：若有新增数据库迁移，请务必先本地执行 `npx wrangler d1 migrations apply sm-ui-db --remote` 后再 push。
+   > 2. 版本号提交 push 后到 GitHub Actions 完成 `sm-node:<版本>` 镜像发布前，控制台生成的 Docker 接入命令会短暂指向尚未发布的镜像标签。
 
 ---
 
@@ -57,13 +62,13 @@ npm install
 
 # 2. 创建 Cloudflare D1 数据库
 npx wrangler d1 create sm-ui-db
-# 将终端输出的 database_id 替换到 wrangler.jsonc 中
+# 记下终端输出的 database_id
 
 # 3. 初始化数据库表结构
 npx wrangler d1 execute sm-ui-db --remote --file=./schema.sql
 
-# 4. 构建前端并发布到 Cloudflare
-npm run deploy
+# 4. 构建前端并发布到 Cloudflare（注入 D1_DATABASE_ID）
+D1_DATABASE_ID=<你的 database_id> npm run deploy
 ```
 
 ---
