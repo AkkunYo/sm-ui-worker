@@ -30,7 +30,7 @@
     <PageSkeleton v-if="loading" label="正在读取协议模板池…" />
 
     <!-- Templates Content -->
-    <div v-else class="space-y-4">
+    <div v-else-if="loaded" class="space-y-4">
       <!-- Empty State -->
       <div v-if="templates.length === 0" class="p-12 text-center rounded-3xl bg-slate-900 border border-slate-800 text-slate-500 space-y-3">
         <p class="text-sm">暂无可用协议模板</p>
@@ -189,10 +189,11 @@
             <!-- 1. Name & Protocol -->
             <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <div>
-                <label class="block text-xs font-semibold text-slate-300 uppercase tracking-wider mb-1.5">
+                <label for="template-name" class="block text-xs font-semibold text-slate-300 uppercase tracking-wider mb-1.5">
                   模板名称 <span class="text-rose-400">*</span>
                 </label>
                 <input
+                  id="template-name"
                   v-model="form.name"
                   type="text"
                   required
@@ -202,10 +203,11 @@
               </div>
 
               <div>
-                <label class="block text-xs font-semibold text-slate-300 uppercase tracking-wider mb-1.5">
+                <label for="template-protocol" class="block text-xs font-semibold text-slate-300 uppercase tracking-wider mb-1.5">
                   协议类型 <span class="text-rose-400">*</span>
                 </label>
                 <select
+                  id="template-protocol"
                   v-model="form.protocol"
                   :disabled="isEditing"
                   @change="onProtocolChange"
@@ -222,10 +224,11 @@
 
             <!-- Single Port Configuration -->
             <div>
-              <label class="block text-xs font-semibold text-slate-300 mb-1.5">
+              <label for="template-port" class="block text-xs font-semibold text-slate-300 mb-1.5">
                 服务监听端口 (Port) <span class="text-rose-400">*</span>
               </label>
               <input
+                id="template-port"
                 v-model.number="form.listen_port"
                 type="number"
                 min="1"
@@ -253,8 +256,9 @@
 
               <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div>
-                  <label class="block text-xs font-semibold text-slate-300 mb-1.5">伪装域名 (SNI) *</label>
+                  <label for="template-sni" class="block text-xs font-semibold text-slate-300 mb-1.5">伪装域名 (SNI) *</label>
                   <input
+                    id="template-sni"
                     v-model="form.reality_server_name"
                     type="text"
                     required
@@ -263,8 +267,9 @@
                   />
                 </div>
                 <div>
-                  <label class="block text-xs font-semibold text-slate-300 mb-1.5">回落目标 (Dest) *</label>
+                  <label for="template-dest" class="block text-xs font-semibold text-slate-300 mb-1.5">回落目标 (Dest) *</label>
                   <input
+                    id="template-dest"
                     v-model="form.reality_dest"
                     type="text"
                     required
@@ -324,8 +329,9 @@
 
               <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div>
-                  <label class="block text-xs font-semibold text-slate-300 mb-1.5">服务器上行 (Mbps)</label>
+                  <label for="template-hy2-up" class="block text-xs font-semibold text-slate-300 mb-1.5">服务器上行 (Mbps)</label>
                   <input
+                    id="template-hy2-up"
                     v-model.number="form.hy2_up_mbps"
                     type="number"
                     min="0"
@@ -336,8 +342,9 @@
                   <p class="text-[11px] text-slate-500 mt-1">对应客户端下载，0 表示不限速</p>
                 </div>
                 <div>
-                  <label class="block text-xs font-semibold text-slate-300 mb-1.5">服务器下行 (Mbps)</label>
+                  <label for="template-hy2-down" class="block text-xs font-semibold text-slate-300 mb-1.5">服务器下行 (Mbps)</label>
                   <input
+                    id="template-hy2-down"
                     v-model.number="form.hy2_down_mbps"
                     type="number"
                     min="0"
@@ -350,8 +357,9 @@
               </div>
 
               <div>
-                <label class="block text-xs font-semibold text-slate-300 mb-1.5">HTTP 伪装网址</label>
+                <label for="template-hy2-masquerade" class="block text-xs font-semibold text-slate-300 mb-1.5">HTTP 伪装网址</label>
                 <input
+                  id="template-hy2-masquerade"
                   v-model="form.hy2_masquerade"
                   type="text"
                   required
@@ -367,8 +375,9 @@
                 <span class="text-xs font-semibold text-violet-400 uppercase tracking-wider">TUIC v5 参数配置</span>
               </div>
               <div>
-                <label class="block text-xs font-semibold text-slate-300 mb-1.5">拥塞控制算法 (Congestion Control)</label>
+                <label for="template-tuic-cc" class="block text-xs font-semibold text-slate-300 mb-1.5">拥塞控制算法 (Congestion Control)</label>
                 <select
+                  id="template-tuic-cc"
                   v-model="form.tuic_congestion_control"
                   class="w-full px-4 py-2.5 rounded-xl bg-slate-950 border border-slate-800 text-slate-100 text-sm focus:border-violet-500 focus:outline-none"
                 >
@@ -518,6 +527,8 @@ const isAdmin = computed(() => currentUser?.role === 'admin')
 
 const templates = ref([])
 const loading = ref(true)
+// True after the first successful read; until then an error must not be shown as "no templates"
+const loaded = ref(false)
 const loadError = ref('')
 const saving = ref(false)
 const saveError = ref('')
@@ -607,6 +618,7 @@ async function loadTemplates() {
   try {
     const data = await readPage('/api/v1/templates')
     templates.value = Array.isArray(data) ? data : []
+    loaded.value = true
   } catch (err) {
     loadError.value = err.message || '加载协议模板失败'
   } finally {

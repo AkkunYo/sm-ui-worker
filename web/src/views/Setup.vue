@@ -14,10 +14,11 @@
 
       <form @submit.prevent="handleSubmit" class="space-y-4">
         <div>
-          <label class="block text-xs font-semibold text-slate-300 uppercase tracking-wider mb-1.5">
+          <label for="setup-username" class="block text-xs font-semibold text-slate-300 uppercase tracking-wider mb-1.5">
             管理员用户名 <span class="text-rose-400">*</span>
           </label>
           <input
+            id="setup-username"
             v-model="form.username"
             type="text"
             required
@@ -27,10 +28,11 @@
         </div>
 
         <div>
-          <label class="block text-xs font-semibold text-slate-300 uppercase tracking-wider mb-1.5">
+          <label for="setup-password" class="block text-xs font-semibold text-slate-300 uppercase tracking-wider mb-1.5">
             管理密码 <span class="text-rose-400">* (不少于 6 位)</span>
           </label>
           <input
+            id="setup-password"
             v-model="form.password"
             type="password"
             required
@@ -41,10 +43,11 @@
         </div>
 
         <div>
-          <label class="block text-xs font-semibold text-slate-300 uppercase tracking-wider mb-1.5">
+          <label for="setup-confirm-password" class="block text-xs font-semibold text-slate-300 uppercase tracking-wider mb-1.5">
             确认密码 <span class="text-rose-400">*</span>
           </label>
           <input
+            id="setup-confirm-password"
             v-model="form.confirm_password"
             type="password"
             required

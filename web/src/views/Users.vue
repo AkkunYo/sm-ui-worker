@@ -39,7 +39,7 @@
             <tr v-if="loading && users.length === 0">
               <td colspan="8" class="px-6 py-12 text-center text-slate-500">正在加载租户列表…</td>
             </tr>
-            <tr v-else-if="users.length === 0">
+            <tr v-else-if="loaded && users.length === 0">
               <td colspan="8" class="px-6 py-12 text-center text-slate-500">暂无租户用户，点击右上角添加新租户。</td>
             </tr>
             <tr v-for="user in users" :key="user.id" class="hover:bg-slate-800/30 transition">
@@ -127,23 +127,23 @@
 
           <form @submit.prevent="submitAddUser" class="space-y-4">
             <div>
-              <label class="block text-xs font-semibold text-slate-300 uppercase tracking-wider mb-1.5">租户登录用户名 <span class="text-rose-400">*</span></label>
-              <input v-model="addForm.username" type="text" required placeholder="如: zkyml, yjwenhua" class="w-full px-4 py-2.5 rounded-xl bg-slate-950 border border-slate-800 text-sm text-white focus:outline-none focus:border-violet-500" />
+              <label for="user-add-username" class="block text-xs font-semibold text-slate-300 uppercase tracking-wider mb-1.5">租户登录用户名 <span class="text-rose-400">*</span></label>
+              <input id="user-add-username" v-model="addForm.username" type="text" required placeholder="如: zkyml, yjwenhua" class="w-full px-4 py-2.5 rounded-xl bg-slate-950 border border-slate-800 text-sm text-white focus:outline-none focus:border-violet-500" />
             </div>
 
             <div>
-              <label class="block text-xs font-semibold text-slate-300 uppercase tracking-wider mb-1.5">登录密码 <span class="text-rose-400">* (不少于 6 位)</span></label>
-              <input v-model="addForm.password" type="password" required minlength="6" placeholder="用于登录控制台" class="w-full px-4 py-2.5 rounded-xl bg-slate-950 border border-slate-800 text-sm text-white focus:outline-none focus:border-violet-500" />
+              <label for="user-add-password" class="block text-xs font-semibold text-slate-300 uppercase tracking-wider mb-1.5">登录密码 <span class="text-rose-400">* (不少于 6 位)</span></label>
+              <input id="user-add-password" v-model="addForm.password" type="password" required minlength="6" placeholder="用于登录控制台" class="w-full px-4 py-2.5 rounded-xl bg-slate-950 border border-slate-800 text-sm text-white focus:outline-none focus:border-violet-500" />
             </div>
 
             <div>
-              <label class="block text-xs font-semibold text-slate-300 uppercase tracking-wider mb-1.5">总流量限制 (GB)</label>
-              <input v-model.number="addForm.limit_gb" type="number" min="0" step="0.1" placeholder="0 代表无限制" class="w-full px-4 py-2.5 rounded-xl bg-slate-950 border border-slate-800 text-sm text-white focus:outline-none focus:border-violet-500" />
+              <label for="user-add-limit" class="block text-xs font-semibold text-slate-300 uppercase tracking-wider mb-1.5">总流量限制 (GB)</label>
+              <input id="user-add-limit" v-model.number="addForm.limit_gb" type="number" min="0" step="0.1" placeholder="0 代表无限制" class="w-full px-4 py-2.5 rounded-xl bg-slate-950 border border-slate-800 text-sm text-white focus:outline-none focus:border-violet-500" />
             </div>
 
             <div>
-              <label class="block text-xs font-semibold text-slate-300 uppercase tracking-wider mb-1.5">到期时间 (留空为永久有效)</label>
-              <input v-model="addForm.expire_at" type="datetime-local" class="w-full px-4 py-2.5 rounded-xl bg-slate-950 border border-slate-800 text-sm text-white focus:outline-none focus:border-violet-500" />
+              <label for="user-add-expire" class="block text-xs font-semibold text-slate-300 uppercase tracking-wider mb-1.5">到期时间 (留空为永久有效)</label>
+              <input id="user-add-expire" v-model="addForm.expire_at" type="datetime-local" class="w-full px-4 py-2.5 rounded-xl bg-slate-950 border border-slate-800 text-sm text-white focus:outline-none focus:border-violet-500" />
             </div>
 
             <div v-if="modalError" class="p-3 rounded-xl bg-rose-500/10 border border-rose-500/20 text-rose-400 text-xs">
@@ -170,18 +170,18 @@
 
           <form @submit.prevent="submitEditUser" class="space-y-4">
             <div>
-              <label class="block text-xs font-semibold text-slate-300 uppercase tracking-wider mb-1.5">重置登录密码 (留空则保持不变)</label>
-              <input v-model="editForm.password" type="password" minlength="6" placeholder="留空不修改" class="w-full px-4 py-2.5 rounded-xl bg-slate-950 border border-slate-800 text-sm text-white focus:outline-none focus:border-violet-500" />
+              <label for="user-edit-password" class="block text-xs font-semibold text-slate-300 uppercase tracking-wider mb-1.5">重置登录密码 (留空则保持不变)</label>
+              <input id="user-edit-password" v-model="editForm.password" type="password" minlength="6" placeholder="留空不修改" class="w-full px-4 py-2.5 rounded-xl bg-slate-950 border border-slate-800 text-sm text-white focus:outline-none focus:border-violet-500" />
             </div>
 
             <div>
-              <label class="block text-xs font-semibold text-slate-300 uppercase tracking-wider mb-1.5">总流量限制 (GB)</label>
-              <input v-model.number="editForm.limit_gb" type="number" min="0" step="0.1" class="w-full px-4 py-2.5 rounded-xl bg-slate-950 border border-slate-800 text-sm text-white focus:outline-none focus:border-violet-500" />
+              <label for="user-edit-limit" class="block text-xs font-semibold text-slate-300 uppercase tracking-wider mb-1.5">总流量限制 (GB)</label>
+              <input id="user-edit-limit" v-model.number="editForm.limit_gb" type="number" min="0" step="0.1" class="w-full px-4 py-2.5 rounded-xl bg-slate-950 border border-slate-800 text-sm text-white focus:outline-none focus:border-violet-500" />
             </div>
 
             <div>
-              <label class="block text-xs font-semibold text-slate-300 uppercase tracking-wider mb-1.5">到期时间 (留空为永久)</label>
-              <input v-model="editForm.expire_at" type="datetime-local" class="w-full px-4 py-2.5 rounded-xl bg-slate-950 border border-slate-800 text-sm text-white focus:outline-none focus:border-violet-500" />
+              <label for="user-edit-expire" class="block text-xs font-semibold text-slate-300 uppercase tracking-wider mb-1.5">到期时间 (留空为永久)</label>
+              <input id="user-edit-expire" v-model="editForm.expire_at" type="datetime-local" class="w-full px-4 py-2.5 rounded-xl bg-slate-950 border border-slate-800 text-sm text-white focus:outline-none focus:border-violet-500" />
             </div>
 
             <div>
@@ -218,6 +218,8 @@ import { request, formatBytes } from '../api'
 
 const users = ref([])
 const loading = ref(false)
+// True after the first successful read; until then an error must not be shown as "no tenants"
+const loaded = ref(false)
 const error = ref('')
 const submitting = ref(false)
 const modalError = ref('')
@@ -247,6 +249,7 @@ async function loadUsers() {
     const data = await request('/api/v1/users')
     if (Array.isArray(data)) {
       users.value = data
+      loaded.value = true
     }
   } catch (err) {
     error.value = err.message || '加载租户列表失败'

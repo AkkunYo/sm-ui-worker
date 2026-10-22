@@ -11,8 +11,9 @@
 
       <form @submit.prevent="handleLogin" class="space-y-4">
         <div>
-          <label class="block text-xs font-semibold text-slate-300 uppercase tracking-wider mb-2">用户名</label>
+          <label for="login-username" class="block text-xs font-semibold text-slate-300 uppercase tracking-wider mb-2">用户名</label>
           <input
+            id="login-username"
             v-model="form.username"
             type="text"
             required
@@ -22,8 +23,9 @@
         </div>
 
         <div>
-          <label class="block text-xs font-semibold text-slate-300 uppercase tracking-wider mb-2">密码</label>
+          <label for="login-password" class="block text-xs font-semibold text-slate-300 uppercase tracking-wider mb-2">密码</label>
           <input
+            id="login-password"
             v-model="form.password"
             type="password"
             required

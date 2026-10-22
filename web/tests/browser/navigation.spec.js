@@ -257,13 +257,27 @@ for (const destination of destinations) {
 }
 
 test('协议模板: a failed initial read does not also claim there are no templates', async ({ page }) => {
-  // Inbounds.vue renders its empty state ("暂无可用协议模板") next to the load error.
-  test.fail(true, 'Inbounds.vue shows the empty state when the initial read fails')
   await mockAPI(page)
   await page.route('**/api/v1/templates', route => route.fulfill({ status: 503, json: { error: '测试：数据暂时不可用' } }))
   await page.goto('/#/inbounds')
   await expect(page.getByRole('alert').filter({ hasText: '测试：数据暂时不可用' })).toBeVisible()
   await expect(page.getByText('暂无可用协议模板')).toHaveCount(0, { timeout: 1000 })
+})
+
+test('租户管理: a failed initial read shows only the error and retry, then retry fills the table', async ({ page }) => {
+  await mockAPI(page, { user: admin })
+  let failed = true
+  await page.route('**/api/v1/users', route => failed
+    ? route.fulfill({ status: 503, json: { error: '测试：数据暂时不可用' } })
+    : route.fulfill({ json: [{ ...tenant, status: 1, node_count: 1 }] }))
+  await page.goto('/#/users')
+  const alert = page.getByRole('alert').filter({ hasText: '测试：数据暂时不可用' })
+  await expect(alert).toBeVisible()
+  await expect(page.getByText(/暂无租户用户/)).toHaveCount(0, { timeout: 1000 })
+  failed = false
+  await alert.getByRole('button', { name: '重试' }).click()
+  await expect(page.getByRole('row').filter({ hasText: tenant.username })).toBeVisible()
+  await expect(page.getByText(/暂无租户用户/)).toHaveCount(0)
 })
 
 test('subscription background refresh preserves the selected tab and last data on failure', async ({ page }) => {
@@ -338,6 +352,47 @@ test('host forms attach master templates through the multi-select and send templ
     { method: 'POST', body: { owner_id: tenant.id, name: 'new-host', server_ip: '', template_ids: [1, 2, 4] } }
   ])
 })
+
+test('the host template dropdown can be operated with the keyboard alone', async ({ page }) => {
+  await mockAPI(page)
+  const writes = []
+  page.on('dialog', dialog => dialog.accept())
+  await page.route('**/api/v1/nodes/1', route => {
+    writes.push(route.request().postDataJSON())
+    return route.fulfill({ json: { success: true } })
+  })
+  await page.goto('/#/nodes')
+  await page.getByRole('row').filter({ hasText: 'Master Demo' }).getByRole('button', { name: '配置主机属性' }).click()
+
+  // A real button whose accessible name is the label plus the current selection.
+  const trigger = page.locator('button[aria-controls="node-edit-templates-menu"]')
+  await expect(trigger).toHaveAccessibleName(/挂载协议模板.*VLESS.*HYSTERIA2/)
+  await expect(trigger).toHaveAttribute('aria-expanded', 'false')
+  expect(await trigger.evaluate(el => el.tagName)).toBe('BUTTON')
+
+  await trigger.focus()
+  await page.keyboard.press('Enter')
+  await expect(trigger).toHaveAttribute('aria-expanded', 'true')
+  const menu = page.getByRole('group', { name: /挂载协议模板/ })
+  await expect(menu).toBeVisible()
+
+  // Tab moves from the trigger into the options; Space toggles the focused checkbox.
+  await page.keyboard.press('Tab')
+  await expect(menu.getByRole('checkbox', { name: /VLESS/ })).toBeFocused()
+  await page.keyboard.press('Space')
+  await expect(page.locator('form')).toContainText('已选 1 / 3')
+  await expect(trigger).toHaveAccessibleName(/挂载协议模板/)
+  await expect(trigger).not.toHaveAccessibleName(/VLESS/)
+
+  await trigger.focus()
+  await page.keyboard.press('Enter')
+  await expect(trigger).toHaveAttribute('aria-expanded', 'false')
+  await expect(menu).toHaveCount(0)
+
+  await page.getByRole('button', { name: '保存修改' }).click()
+  await expect.poll(() => writes.length).toBe(1)
+  expect(writes[0].template_ids).toEqual([2])
+})
 test('install instructions pin docker to the controller version and let the shell script install the latest', async ({ page }) => {
   await mockAPI(page, { version: `v${VERSION}` })
   await page.goto('/#/nodes')
@@ -368,10 +423,8 @@ test('templates page keeps the API order, badges default templates and edits Hys
   }
   await rows.filter({ hasText: 'HK Hy2 加速' }).getByRole('button', { name: '编辑模板' }).click()
   await expect(page.getByRole('heading', { name: '编辑协议模板' })).toBeVisible()
-  // The labels are not bound to their inputs, so address each input as the label's sibling.
-  const field = label => page.locator('form').locator(`xpath=.//label[normalize-space()="${label}"]/following-sibling::input[1]`)
-  await expect(field('服务器上行 (Mbps)')).toHaveValue('50')
-  await expect(field('服务器下行 (Mbps)')).toHaveValue('200')
-  await expect(field('HTTP 伪装网址')).toHaveValue('https://www.apple.com')
+  await expect(page.getByLabel('服务器上行 (Mbps)', { exact: true })).toHaveValue('50')
+  await expect(page.getByLabel('服务器下行 (Mbps)', { exact: true })).toHaveValue('200')
+  await expect(page.getByLabel('HTTP 伪装网址', { exact: true })).toHaveValue('https://www.apple.com')
   expect(calls.filter(path => path === '/api/v1/templates')).toHaveLength(1)
 })

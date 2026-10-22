@@ -259,10 +259,11 @@
 
         <form @submit.prevent="createNode" class="space-y-4">
           <div v-if="isAdmin && tenantList.length > 0">
-            <label class="block text-xs font-semibold text-slate-300 uppercase tracking-wider mb-1.5">
+            <label for="node-add-owner" class="block text-xs font-semibold text-slate-300 uppercase tracking-wider mb-1.5">
               指定所属租户用户
             </label>
             <select
+              id="node-add-owner"
               v-model="addForm.owner_id"
               class="w-full px-4 py-2.5 rounded-xl bg-slate-950 border border-slate-800 text-slate-100 text-sm focus:border-emerald-500 focus:outline-none"
             >
@@ -272,10 +273,11 @@
           </div>
 
           <div>
-            <label class="block text-xs font-semibold text-slate-300 uppercase tracking-wider mb-1.5">
+            <label for="node-add-name" class="block text-xs font-semibold text-slate-300 uppercase tracking-wider mb-1.5">
               主机备注名称 <span class="text-rose-400">* (不得重复)</span>
             </label>
             <input
+              id="node-add-name"
               v-model="addForm.name"
               type="text"
               required
@@ -286,10 +288,11 @@
           </div>
 
           <div>
-            <label class="block text-xs font-semibold text-slate-300 uppercase tracking-wider mb-1.5">
+            <label for="node-add-server-ip" class="block text-xs font-semibold text-slate-300 uppercase tracking-wider mb-1.5">
               指定公网出口 IP 或域名 (可选)
             </label>
             <input
+              id="node-add-server-ip"
               v-model="addForm.server_ip"
               type="text"
               class="w-full px-4 py-2.5 rounded-xl bg-slate-950 border border-slate-800 text-slate-100 placeholder-slate-500 text-sm focus:border-emerald-500 focus:outline-none font-mono"
@@ -301,20 +304,24 @@
           <!-- Inbound Templates Multi-Select Dropdown -->
           <div class="space-y-1.5 pt-2 border-t border-slate-800">
             <div class="flex items-center justify-between">
-              <label class="block text-xs font-semibold text-slate-200 uppercase tracking-wider">
+              <span id="node-add-templates-label" class="block text-xs font-semibold text-slate-200 uppercase tracking-wider">
                 挂载协议模板 (多选)
-              </label>
+              </span>
               <span class="text-[11px] text-slate-500 font-mono">
                 已选 {{ addForm.template_ids.length }} / {{ availableTemplates.length }}
               </span>
             </div>
 
             <div class="relative">
-              <div
+              <button
+                type="button"
                 @click="addDropdownOpen = !addDropdownOpen"
-                class="min-h-[42px] px-3 py-1.5 rounded-xl bg-slate-950 border border-slate-800 hover:border-slate-700 cursor-pointer flex items-center justify-between gap-2 flex-wrap"
+                :aria-expanded="addDropdownOpen"
+                aria-controls="node-add-templates-menu"
+                aria-labelledby="node-add-templates-label node-add-templates-selected"
+                class="w-full text-left min-h-[42px] px-3 py-1.5 rounded-xl bg-slate-950 border border-slate-800 hover:border-slate-700 focus:border-emerald-500 focus:outline-none cursor-pointer flex items-center justify-between gap-2 flex-wrap"
               >
-                <div class="flex items-center gap-1.5 flex-wrap">
+                <span id="node-add-templates-selected" class="flex items-center gap-1.5 flex-wrap">
                   <span v-if="addForm.template_ids.length === 0" class="text-xs text-slate-500">
                     请选择挂载协议模板...
                   </span>
@@ -326,12 +333,15 @@
                   >
                     {{ getTemplateById(tid)?.protocol?.toUpperCase() || 'SLOT' }}
                   </span>
-                </div>
-                <ChevronDown class="w-4 h-4 text-slate-400 shrink-0 transition-transform" :class="addDropdownOpen ? 'rotate-180' : ''" />
-              </div>
+                </span>
+                <ChevronDown aria-hidden="true" class="w-4 h-4 text-slate-400 shrink-0 transition-transform" :class="addDropdownOpen ? 'rotate-180' : ''" />
+              </button>
 
               <div
                 v-if="addDropdownOpen"
+                id="node-add-templates-menu"
+                role="group"
+                aria-labelledby="node-add-templates-label"
                 class="absolute left-0 right-0 top-full mt-1.5 z-50 bg-slate-900 border border-slate-700/80 rounded-xl shadow-2xl p-1.5 max-h-48 overflow-y-auto space-y-1"
               >
                 <label
@@ -550,10 +560,11 @@
 
         <form @submit.prevent="saveEditNode" class="space-y-4">
           <div>
-            <label class="block text-xs font-semibold text-slate-300 uppercase tracking-wider mb-1.5">
+            <label for="node-edit-name" class="block text-xs font-semibold text-slate-300 uppercase tracking-wider mb-1.5">
               主机备注名称 <span class="text-rose-400">*</span>
             </label>
             <input
+              id="node-edit-name"
               v-model="editForm.name"
               type="text"
               required
@@ -564,10 +575,11 @@
           </div>
 
           <div>
-            <label class="block text-xs font-semibold text-slate-300 uppercase tracking-wider mb-1.5">
+            <label for="node-edit-server-ip" class="block text-xs font-semibold text-slate-300 uppercase tracking-wider mb-1.5">
               指定公网出口 IP 或域名 (可选)
             </label>
             <input
+              id="node-edit-server-ip"
               v-model="editForm.server_ip"
               type="text"
               class="w-full px-4 py-2.5 rounded-xl bg-slate-950 border border-slate-800 text-slate-100 font-mono text-sm focus:border-emerald-500 focus:outline-none"
@@ -579,20 +591,24 @@
           <!-- Inbound Templates Multi-Select Dropdown for Edit Modal -->
           <div class="space-y-1.5 pt-2 border-t border-slate-800">
             <div class="flex items-center justify-between">
-              <label class="block text-xs font-semibold text-slate-200 uppercase tracking-wider">
+              <span id="node-edit-templates-label" class="block text-xs font-semibold text-slate-200 uppercase tracking-wider">
                 挂载协议模板 (多选)
-              </label>
+              </span>
               <span class="text-[11px] text-slate-500 font-mono">
                 已选 {{ editForm.template_ids.length }} / {{ availableTemplates.length }}
               </span>
             </div>
 
             <div class="relative">
-              <div
+              <button
+                type="button"
                 @click="editDropdownOpen = !editDropdownOpen"
-                class="min-h-[42px] px-3 py-1.5 rounded-xl bg-slate-950 border border-slate-800 hover:border-slate-700 cursor-pointer flex items-center justify-between gap-2 flex-wrap"
+                :aria-expanded="editDropdownOpen"
+                aria-controls="node-edit-templates-menu"
+                aria-labelledby="node-edit-templates-label node-edit-templates-selected"
+                class="w-full text-left min-h-[42px] px-3 py-1.5 rounded-xl bg-slate-950 border border-slate-800 hover:border-slate-700 focus:border-emerald-500 focus:outline-none cursor-pointer flex items-center justify-between gap-2 flex-wrap"
               >
-                <div class="flex items-center gap-1.5 flex-wrap">
+                <span id="node-edit-templates-selected" class="flex items-center gap-1.5 flex-wrap">
                   <span v-if="editForm.template_ids.length === 0" class="text-xs text-slate-500">
                     请选择挂载协议模板...
                   </span>
@@ -604,12 +620,15 @@
                   >
                     {{ getTemplateById(tid)?.protocol?.toUpperCase() || 'SLOT' }}
                   </span>
-                </div>
-                <ChevronDown class="w-4 h-4 text-slate-400 shrink-0 transition-transform" :class="editDropdownOpen ? 'rotate-180' : ''" />
-              </div>
+                </span>
+                <ChevronDown aria-hidden="true" class="w-4 h-4 text-slate-400 shrink-0 transition-transform" :class="editDropdownOpen ? 'rotate-180' : ''" />
+              </button>
 
               <div
                 v-if="editDropdownOpen"
+                id="node-edit-templates-menu"
+                role="group"
+                aria-labelledby="node-edit-templates-label"
                 class="absolute left-0 right-0 top-full mt-1.5 z-50 bg-slate-900 border border-slate-700/80 rounded-xl shadow-2xl p-1.5 max-h-48 overflow-y-auto space-y-1"
               >
                 <label
@@ -634,8 +653,9 @@
           </div>
 
           <div>
-            <label class="block text-xs font-semibold text-slate-400 mb-1">主机专属 HostId 凭证</label>
+            <label for="node-edit-token" class="block text-xs font-semibold text-slate-400 mb-1">主机专属 HostId 凭证</label>
             <input
+              id="node-edit-token"
               type="text"
               readonly
               :value="editForm.token"

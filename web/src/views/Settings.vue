@@ -38,10 +38,11 @@
             </div>
 
             <div>
-              <label class="block text-xs font-semibold text-slate-300 uppercase tracking-wider mb-1.5">
+              <label for="account-old-password" class="block text-xs font-semibold text-slate-300 uppercase tracking-wider mb-1.5">
                 原密码 <span class="text-slate-500 font-normal">(仅在修改密码时必填)</span>
               </label>
               <input
+                id="account-old-password"
                 v-model="profileForm.old_password"
                 type="password"
                 class="w-full px-4 py-2.5 rounded-xl bg-slate-950 border border-slate-800 text-slate-100 text-sm focus:border-blue-500 focus:outline-none"
@@ -50,10 +51,11 @@
             </div>
 
             <div>
-              <label class="block text-xs font-semibold text-slate-300 uppercase tracking-wider mb-1.5">
+              <label for="account-new-password" class="block text-xs font-semibold text-slate-300 uppercase tracking-wider mb-1.5">
                 新密码 <span class="text-slate-500 font-normal">(留空表示不修改密码)</span>
               </label>
               <input
+                id="account-new-password"
                 v-model="profileForm.new_password"
                 type="password"
                 minlength="6"
@@ -63,10 +65,11 @@
             </div>
 
             <div>
-              <label class="block text-xs font-semibold text-slate-300 uppercase tracking-wider mb-1.5">
+              <label for="account-confirm-password" class="block text-xs font-semibold text-slate-300 uppercase tracking-wider mb-1.5">
                 确认新密码
               </label>
               <input
+                id="account-confirm-password"
                 v-model="profileForm.confirm_password"
                 type="password"
                 minlength="6"
