@@ -115,7 +115,7 @@ subscriptionRoute.get('/api/v1/traffic', authMiddleware, async (c) => {
 
   if (currentUser.role === 'admin') {
     // Only real proxy users, excluding system admin!
-    const users = (await c.env.DB.prepare("SELECT id, username, used_up_bytes, used_down_bytes, traffic_limit_bytes FROM users WHERE role != 'admin'").all<any>()).results;
+    const users = (await c.env.DB.prepare("SELECT id, username, used_up_bytes, used_down_bytes, traffic_limit_bytes FROM users ORDER BY id ASC").all<any>()).results;
     const nodes = (await c.env.DB.prepare('SELECT id, name, used_up_bytes, used_down_bytes FROM nodes').all<any>()).results;
 
     let totalUplink = 0;

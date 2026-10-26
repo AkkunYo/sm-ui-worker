@@ -113,7 +113,11 @@ usersRoute.put('/api/v1/users/:id', authMiddleware, adminOnly, async (c) => {
 });
 
 usersRoute.delete('/api/v1/users/:id', authMiddleware, adminOnly, async (c) => {
+  const currentUser = c.get('user') as any;
   const id = parseInt(c.req.param('id') || '0', 10);
+  if (currentUser && id === currentUser.userId) {
+    return c.json({ error: '不能删除当前登录的管理员账号' }, 400);
+  }
   const user = await c.env.DB.prepare('SELECT role FROM users WHERE id = ?').bind(id).first<any>();
   if (!user) return c.json({ error: '用户不存在' }, 404);
   if (user.role === 'admin') {

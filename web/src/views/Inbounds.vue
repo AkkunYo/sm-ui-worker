@@ -1,12 +1,12 @@
 <template>
-  <div class="p-4 sm:p-8 space-y-6 max-w-6xl mx-auto">
+  <div class="p-4 sm:p-6 space-y-5 max-w-7xl mx-auto">
     <!-- Header -->
     <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
       <div>
         <h1 class="text-2xl font-bold tracking-tight text-white flex items-center gap-2.5">
           <span>协议主模板池 (Master Templates)</span>
         </h1>
-        <p class="text-sm text-slate-400 mt-1">
+        <p class="text-xs sm:text-sm text-slate-400 mt-0.5">
           单端口纯净架构：端口与协议参数由管理员在主模板统一管控，各主机仅有勾选挂载权，子节点无条件遵从规则。
         </p>
       </div>
@@ -47,21 +47,21 @@
       <!-- Compact Templates Table -->
       <div v-else class="bg-slate-900 border border-slate-800 rounded-2xl overflow-hidden shadow-xl">
         <div class="overflow-x-auto">
-          <table class="w-full text-left text-sm text-slate-300">
-            <thead class="bg-slate-950/60 text-xs uppercase text-slate-400 border-b border-slate-800">
+          <table class="w-full text-left text-xs sm:text-sm text-slate-300">
+            <thead class="bg-slate-950/60 text-xs uppercase text-slate-400 border-b border-slate-800 select-none">
               <tr>
-                <th class="px-5 py-3.5 font-semibold">模板名称</th>
-                <th class="px-4 py-3.5 font-semibold">协议类型</th>
-                <th class="px-4 py-3.5 font-semibold">监听端口</th>
-                <th class="px-5 py-3.5 font-semibold">伪装 / 核心参数</th>
-                <th class="px-4 py-3.5 font-semibold">混淆状态</th>
-                <th class="px-4 py-3.5 font-semibold text-right">操作</th>
+                <th class="px-4 py-3 font-semibold">模板名称</th>
+                <th class="px-3 py-3 font-semibold">协议类型</th>
+                <th class="px-3 py-3 font-semibold">监听端口</th>
+                <th class="px-4 py-3 font-semibold">伪装 / 核心参数</th>
+                <th class="px-3 py-3 font-semibold">混淆状态</th>
+                <th class="px-4 py-3 font-semibold text-right">操作</th>
               </tr>
             </thead>
-            <tbody class="divide-y divide-slate-800">
+            <tbody class="divide-y divide-slate-800/80">
               <tr v-for="tmpl in templates" :key="tmpl.id" class="hover:bg-slate-800/30 transition">
                 <!-- 1. Name & Badges -->
-                <td class="px-5 py-3.5">
+                <td class="px-4 py-3">
                   <div class="flex items-center space-x-2">
                     <span class="font-semibold text-white tracking-tight">{{ tmpl.name }}</span>
                     <span
@@ -77,7 +77,7 @@
                 </td>
 
                 <!-- 2. Protocol Badge -->
-                <td class="px-4 py-3.5">
+                <td class="px-3 py-3">
                   <span
                     class="px-2.5 py-0.5 rounded-lg text-xs font-bold uppercase tracking-wider border inline-flex items-center gap-1.5"
                     :class="getProtoBadge(tmpl.protocol).class"
@@ -88,14 +88,14 @@
                 </td>
 
                 <!-- 3. Port (Pure Single Port) -->
-                <td class="px-4 py-3.5 font-mono text-xs">
+                <td class="px-3 py-3 font-mono text-xs">
                   <span class="px-2 py-0.5 rounded bg-slate-800 text-slate-200 border border-slate-700 font-semibold">
                     :{{ tmpl.listen_port || 2096 }}
                   </span>
                 </td>
 
                 <!-- 4. Parameters -->
-                <td class="px-5 py-3.5 text-xs font-mono">
+                <td class="px-4 py-3 text-xs font-mono">
                   <div v-if="tmpl.protocol === 'vless' || tmpl.protocol === 'trojan'" class="space-y-0.5">
                     <div class="text-slate-200 truncate max-w-xs" :title="tmpl.reality_server_name">
                       SNI: <span class="text-emerald-400">{{ tmpl.reality_server_name || '-' }}</span>
@@ -121,7 +121,7 @@
                 </td>
 
                 <!-- 5. Obfs -->
-                <td class="px-4 py-3.5 text-xs">
+                <td class="px-3 py-3 text-xs">
                   <div v-if="tmpl.hy2_obfs_password" class="inline-flex items-center space-x-1.5 px-2 py-0.5 rounded-lg bg-amber-500/10 border border-amber-500/20 text-amber-300 font-mono text-[11px]">
                     <span>🛡 Salamander</span>
                     <button
@@ -137,7 +137,7 @@
                 </td>
 
                 <!-- 6. Actions -->
-                <td class="px-4 py-3.5 text-right">
+                <td class="px-4 py-3 text-right">
                   <div v-if="isAdmin" class="flex items-center justify-end space-x-1">
                     <button
                       @click="openEditModal(tmpl)"

@@ -1,49 +1,50 @@
 <template>
-  <div class="p-8 space-y-8 max-w-7xl mx-auto">
-    <div class="flex items-center justify-between">
+  <div class="p-4 sm:p-6 space-y-5 max-w-7xl mx-auto">
+    <!-- Page Header -->
+    <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
       <div>
-        <h1 class="text-2xl font-bold tracking-tight text-white">节点主机管理 (Node Hosts)</h1>
-        <p class="text-sm text-slate-400 mt-1">管理通过反向 WSS 长连接入的 VPS 主机实例与专属 UUID 凭证，自动感知公网 IP 并点亮在线状态</p>
+        <h1 class="text-xl sm:text-2xl font-bold tracking-tight text-white">节点主机管理 (Node Hosts)</h1>
+        <p class="text-xs sm:text-sm text-slate-400 mt-0.5">管理通过反向 WSS 长连接入的 VPS 主机实例与专属凭证</p>
       </div>
       <button
         @click="openAddModal"
-        class="px-4 py-2 rounded-xl bg-emerald-500 hover:bg-emerald-600 text-slate-950 font-semibold text-sm transition flex items-center space-x-2 shadow-lg shadow-emerald-500/20"
+        class="px-4 py-2.5 rounded-xl bg-emerald-500 hover:bg-emerald-600 text-slate-950 font-semibold text-sm transition flex items-center justify-center space-x-2 shadow-lg shadow-emerald-500/20 self-start sm:self-auto shrink-0"
       >
         <Plus class="w-4 h-4" />
         <span>添加接入主机</span>
       </button>
     </div>
 
-    <div v-if="loadError" role="alert" class="rounded-xl border border-rose-500/30 bg-rose-500/10 p-4 text-sm text-rose-300">
+    <div v-if="loadError" role="alert" class="rounded-xl border border-rose-500/30 bg-rose-500/10 p-3.5 text-xs sm:text-sm text-rose-300">
       {{ loadError }}<span v-if="loaded">，当前展示上次成功获取的数据。</span>
       <button type="button" :disabled="loading" @click="loadNodes" class="ml-3 underline disabled:opacity-50">重试</button>
     </div>
     <PageSkeleton v-if="!loaded && !loadError" label="正在加载主机列表…" />
+
     <!-- Tenant Filter (Admin Only) -->
-    <div v-if="isAdmin && tenantList.length > 0" class="flex flex-wrap items-center justify-between gap-3 bg-slate-900/80 border border-slate-800 p-3.5 rounded-xl">
-      <div class="flex items-center space-x-2 text-xs text-slate-300">
+    <div v-if="isAdmin && tenantList.length > 0" class="flex flex-wrap items-center justify-between gap-3 bg-slate-900 border border-slate-800 p-3 rounded-xl text-xs">
+      <div class="flex items-center space-x-2 text-slate-300">
         <Users class="w-4 h-4 text-violet-400" />
         <span class="font-medium">筛选租户主机:</span>
-        <select v-model="selectedTenantFilter" @change="loadNodes" class="px-3 py-1.5 rounded-lg bg-slate-950 border border-slate-700 text-xs text-slate-100 focus:outline-none">
+        <select v-model="selectedTenantFilter" @change="loadNodes" class="px-2.5 py-1.5 rounded-lg bg-slate-950 border border-slate-700 text-xs text-slate-100 focus:outline-none">
           <option value="">全部租户主机 ({{ nodes.length }}台)</option>
           <option v-for="t in tenantList" :key="t.id" :value="t.id">{{ t.username }} ({{ t.node_count || 0 }}台)</option>
         </select>
       </div>
-      <span class="text-xs text-slate-500">已启用多租户强隔离模式</span>
+      <span class="text-[11px] text-slate-500 font-mono">多租户强隔离</span>
     </div>
 
-    <!-- Nodes Table -->
+    <!-- High Density Nodes Table -->
     <div v-if="loaded" class="bg-slate-900 border border-slate-800 rounded-2xl overflow-hidden shadow-xl">
       <div class="overflow-x-auto">
-        <table class="w-full text-left text-sm text-slate-300">
-          <thead class="bg-slate-950/60 text-xs uppercase text-slate-400 border-b border-slate-800">
+        <table class="w-full text-left text-xs sm:text-sm text-slate-300">
+          <thead class="bg-slate-950/60 text-xs uppercase text-slate-400 border-b border-slate-800 select-none">
             <tr>
-              <th class="px-5 py-3.5 font-semibold w-28">操作</th>
-              <th v-if="isAdmin" class="px-5 py-3.5 font-semibold">所属租户</th>
-              <th class="px-5 py-3.5 font-semibold">名称</th>
-              <th class="px-5 py-3.5 font-semibold">
+              <th class="px-4 py-3 font-semibold">名称 / 状态</th>
+              <th v-if="isAdmin" class="px-3 py-3 font-semibold">租户</th>
+              <th class="px-4 py-3 font-semibold">
                 <div class="flex items-center space-x-1.5">
-                  <span>地址</span>
+                  <span>出口地址 / 延迟</span>
                   <button
                     type="button"
                     @click="hideAddresses = !hideAddresses"
@@ -55,21 +56,129 @@
                   </button>
                 </div>
               </th>
-              <th class="px-5 py-3.5 font-semibold">CPU</th>
-              <th class="px-5 py-3.5 font-semibold">内存</th>
-              <th class="px-5 py-3.5 font-semibold">运行时长</th>
+              <th class="px-4 py-3 font-semibold">挂载协议模板</th>
+              <th class="px-4 py-3 font-semibold">资源负载</th>
+              <th class="px-3 py-3 font-semibold">运行时长 / 版本</th>
+              <th class="px-4 py-3 font-semibold text-right">操作</th>
             </tr>
           </thead>
-          <tbody class="divide-y divide-slate-800">
+          <tbody class="divide-y divide-slate-800/80">
             <tr v-if="nodes.length === 0">
               <td :colspan="isAdmin ? 7 : 6" class="px-6 py-12 text-center text-slate-500">
                 暂无接入主机，点击右上角“添加接入主机”生成专属 UUID 与一键纳管指令。
               </td>
             </tr>
             <tr v-for="node in nodes" :key="node.id" class="hover:bg-slate-800/30 transition">
-              <!-- 1. Left Actions (Power Toggle + Configure + Command + Delete) -->
-              <td class="px-5 py-3.5">
-                <div class="flex items-center space-x-1.5">
+              <!-- 1. Name & Status -->
+              <td class="px-4 py-3 min-w-[140px]">
+                <div class="flex items-center space-x-2">
+                  <span class="relative flex h-2 w-2 shrink-0">
+                    <span
+                      v-if="node.status === 'online'"
+                      class="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"
+                    ></span>
+                    <span
+                      :class="node.status === 'online' ? 'bg-emerald-500' : 'bg-rose-500'"
+                      class="relative inline-flex rounded-full h-2 w-2"
+                    ></span>
+                  </span>
+                  <span class="font-medium text-white text-xs sm:text-sm truncate" :title="node.name">{{ node.name }}</span>
+                  <span
+                    v-if="node.is_local"
+                    class="px-1.5 py-0.2 rounded text-[10px] font-semibold bg-indigo-500/15 text-indigo-400 border border-indigo-500/30 shrink-0"
+                  >Master</span>
+                </div>
+                <p v-if="node.core_error" :title="node.core_error" class="text-[10px] text-amber-300 max-w-44 truncate mt-0.5">{{ node.core_error }}</p>
+                <p v-if="node.last_error" :title="node.last_error" class="text-[10px] text-rose-300 max-w-44 truncate mt-0.5">{{ node.last_error }}</p>
+              </td>
+
+              <!-- Owner Tag (Admin Only) -->
+              <td v-if="isAdmin" class="px-3 py-3">
+                <span class="px-2 py-0.5 rounded text-[11px] font-medium bg-violet-500/10 text-violet-300 border border-violet-500/20 whitespace-nowrap">
+                  {{ node.owner_username || 'Admin' }}
+                </span>
+              </td>
+
+              <!-- 2. Address & Latency -->
+              <td class="px-4 py-3">
+                <div class="flex items-center space-x-2 font-mono text-xs">
+                  <span :class="hideAddresses ? 'filter blur-[4.5px] select-none transition-all duration-200 text-slate-200' : 'text-slate-200'">
+                    {{ node.server_ip || (node.is_local ? '本机 Master' : '待接入') }}
+                  </span>
+                  <span
+                    v-if="node.status === 'online'"
+                    class="px-1.5 py-0.2 rounded text-[10px] font-medium bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 whitespace-nowrap"
+                  >
+                    {{ node.rtt_ms || 0 }} ms
+                  </span>
+                  <span
+                    v-else-if="node.status === 'disabled'"
+                    class="px-1.5 py-0.2 rounded text-[10px] font-medium bg-slate-800 text-slate-500 whitespace-nowrap"
+                  >
+                    已停用
+                  </span>
+                  <span
+                    v-else
+                    class="px-1.5 py-0.2 rounded text-[10px] font-medium bg-rose-500/10 text-rose-400 border border-rose-500/20 whitespace-nowrap"
+                  >
+                    离线
+                  </span>
+                </div>
+              </td>
+
+              <!-- 3. Inbound Slots Badges -->
+              <td class="px-4 py-3">
+                <div v-if="node.inbounds && node.inbounds.length > 0" class="flex flex-wrap items-center gap-1">
+                  <span
+                    v-for="slot in node.inbounds"
+                    :key="slot.id || slot.template_id"
+                    class="px-1.5 py-0.5 rounded text-[10px] font-mono font-medium flex items-center gap-1"
+                    :class="slot.enabled === 0
+                      ? 'bg-slate-800/60 text-slate-500 border border-slate-700/50 line-through'
+                      : slot.protocol === 'vless'
+                        ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20'
+                        : slot.protocol === 'hysteria2'
+                          ? 'bg-sky-500/10 text-sky-400 border border-sky-500/20'
+                          : slot.protocol === 'tuic'
+                            ? 'bg-violet-500/10 text-violet-400 border border-violet-500/20'
+                            : slot.protocol === 'trojan'
+                              ? 'bg-amber-500/10 text-amber-400 border border-amber-500/20'
+                              : 'bg-rose-500/10 text-rose-400 border border-rose-500/20'"
+                  >
+                    <span>{{ slot.protocol ? slot.protocol.toUpperCase() : 'SLOT' }}:{{ slot.listen_port }}</span>
+                    <span v-if="slot.hy2_obfs_password" class="text-[9px] text-amber-300/80">🛡Obfs</span>
+                  </span>
+                </div>
+                <span v-else class="text-xs text-slate-600">—</span>
+              </td>
+
+              <!-- 4. Resources (CPU & Memory) -->
+              <td class="px-4 py-3">
+                <div class="space-y-1 w-28 text-[11px] font-mono text-slate-400">
+                  <div class="flex justify-between text-[10px]">
+                    <span>C:{{ node.cpu_percent ? node.cpu_percent.toFixed(0) : 0 }}%</span>
+                    <span>M:{{ node.memory_percent ? node.memory_percent.toFixed(0) : 0 }}%</span>
+                  </div>
+                  <div class="w-full bg-slate-800 rounded-full h-1 overflow-hidden flex">
+                    <div
+                      class="bg-emerald-500 h-1 transition-all"
+                      :style="{ width: `${Math.min(node.cpu_percent || 0, 100)}%` }"
+                    ></div>
+                  </div>
+                </div>
+              </td>
+
+              <!-- 5. Uptime & Agent Version -->
+              <td class="px-3 py-3 font-mono text-xs text-slate-400">
+                <div>{{ formatUptime(node.uptime_seconds) }}</div>
+                <div class="text-[10px] text-slate-500 mt-0.5">
+                  {{ node.agent_version ? `v${node.agent_version.replace(/^v/, '')}` : '—' }}
+                </div>
+              </td>
+
+              <!-- 6. Right Actions -->
+              <td class="px-4 py-3 text-right">
+                <div class="flex items-center justify-end space-x-1.5">
                   <button
                     @click="toggleNodePower(node)"
                     :disabled="togglingId === node.id"
@@ -106,137 +215,6 @@
                   </button>
                 </div>
               </td>
-
-              <!-- Owner Tag (Admin Only) -->
-              <td v-if="isAdmin" class="px-5 py-3.5">
-                <span class="px-2 py-0.5 rounded text-[11px] font-medium bg-violet-500/10 text-violet-300 border border-violet-500/20">
-                  {{ node.owner_username || 'Admin' }}
-                </span>
-              </td>
-
-              <!-- 2. Name & Status/Latency -->
-              <td class="px-5 py-3.5">
-                <div>
-                  <div class="flex items-center space-x-2">
-                    <p class="font-medium text-white text-sm">{{ node.name }}</p>
-                    <span
-                      v-if="node.is_local"
-                      class="px-1.5 py-0.5 rounded text-[10px] font-semibold bg-indigo-500/15 text-indigo-400 border border-indigo-500/30"
-                    >本机 Master</span>
-                  </div>
-                  <!-- Status & Latency indicator replacing HostId -->
-                  <div class="flex items-center space-x-1.5 mt-1">
-                    <span
-                      v-if="node.status === 'disabled'"
-                      class="inline-flex items-center space-x-1 text-slate-500 text-xs"
-                    >
-                      <span class="w-1.5 h-1.5 rounded-full bg-slate-600"></span>
-                      <span class="text-[11px]">已停用</span>
-                    </span>
-                    <div
-                      v-else-if="node.status === 'online'"
-                      class="inline-flex items-center space-x-1.5"
-                    >
-                      <span class="relative flex h-2 w-2">
-                        <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
-                        <span class="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
-                      </span>
-                      <span class="font-mono text-[11px] font-medium text-emerald-400">
-                        {{ node.rtt_ms || 0 }} ms
-                      </span>
-                    </div>
-                    <div
-                      v-else
-                      class="inline-flex items-center space-x-1 text-rose-400 text-xs"
-                    >
-                      <span class="w-1.5 h-1.5 rounded-full bg-rose-500"></span>
-                      <span class="text-[11px] font-medium">离线</span>
-                    </div>
-                  </div>
-                  <p v-if="node.core_error" :title="node.core_error" class="text-[10px] text-amber-300 max-w-44 truncate mt-0.5">{{ node.core_error }}</p>
-                  <p v-if="node.last_error" :title="node.last_error" class="text-[10px] text-rose-300 max-w-44 truncate mt-0.5">{{ node.last_error }}</p>
-                </div>
-              </td>
-
-              <!-- 3. Address with Masking & Inbound Slots -->
-              <td class="px-5 py-3.5">
-                <div :class="hideAddresses ? 'filter blur-[4.5px] select-none transition-all duration-200' : 'transition-all duration-200'">
-                  <div v-if="node.server_ip" class="space-y-0.5">
-                    <div v-for="ip in node.server_ip.split(',')" :key="ip" class="font-mono text-xs text-slate-200">
-                      {{ ip.trim() }}
-                    </div>
-                  </div>
-                  <div v-else-if="node.is_local" class="font-mono text-xs text-emerald-400">
-                    <div>本机 Master</div>
-                  </div>
-                  <div v-else class="inline-flex items-center space-x-1.5 px-2 py-0.5 rounded-full bg-amber-500/10 border border-amber-500/20 text-amber-400 text-xs font-mono">
-                    <span class="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse"></span>
-                    <span>待接入</span>
-                  </div>
-                </div>
-
-                <!-- Inbound Slots Badges -->
-                <div v-if="node.inbounds && node.inbounds.length > 0" class="flex flex-wrap gap-1 mt-1.5">
-                  <span
-                    v-for="slot in node.inbounds"
-                    :key="slot.id || slot.template_id"
-                    class="px-1.5 py-0.5 rounded text-[10px] font-mono font-medium flex items-center gap-1"
-                    :class="slot.enabled === 0
-                      ? 'bg-slate-800/60 text-slate-500 border border-slate-700/50 line-through'
-                      : slot.protocol === 'vless'
-                        ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20'
-                        : slot.protocol === 'hysteria2'
-                          ? 'bg-sky-500/10 text-sky-400 border border-sky-500/20'
-                          : slot.protocol === 'tuic'
-                            ? 'bg-violet-500/10 text-violet-400 border border-violet-500/20'
-                            : slot.protocol === 'trojan'
-                              ? 'bg-amber-500/10 text-amber-400 border border-amber-500/20'
-                              : 'bg-rose-500/10 text-rose-400 border border-rose-500/20'"
-                  >
-                    <span>{{ slot.protocol ? slot.protocol.toUpperCase() : 'SLOT' }}:{{ slot.listen_port }}</span>
-                    <span v-if="slot.hy2_obfs_password" class="text-[9px] text-amber-300/80">🛡Obfs</span>
-                  </span>
-                </div>
-
-                <div class="text-[10px] text-slate-500 font-mono mt-1 flex items-center space-x-1">
-                  <span class="text-slate-400">{{ node.agent_version ? `v${node.agent_version.replace(/^v/, '')}` : '—' }}</span>
-                </div>
-              </td>
-
-              <!-- 4. CPU -->
-              <td class="px-5 py-3.5">
-                <div class="space-y-1 w-24">
-                  <div class="flex justify-between text-xs">
-                    <span class="font-mono text-slate-200">{{ node.cpu_percent ? node.cpu_percent.toFixed(1) : 0 }}%</span>
-                  </div>
-                  <div class="w-full bg-slate-800 rounded-full h-1.5 overflow-hidden">
-                    <div
-                      class="bg-emerald-500 h-1.5 rounded-full transition-all"
-                      :style="{ width: `${Math.min(node.cpu_percent || 0, 100)}%` }"
-                    ></div>
-                  </div>
-                </div>
-              </td>
-
-              <!-- 6. Memory -->
-              <td class="px-5 py-3.5">
-                <div class="space-y-1 w-24">
-                  <div class="flex justify-between text-xs">
-                    <span class="font-mono text-slate-200">{{ node.memory_percent ? node.memory_percent.toFixed(1) : 0 }}%</span>
-                  </div>
-                  <div class="w-full bg-slate-800 rounded-full h-1.5 overflow-hidden">
-                    <div
-                      class="bg-blue-500 h-1.5 rounded-full transition-all"
-                      :style="{ width: `${Math.min(node.memory_percent || 0, 100)}%` }"
-                    ></div>
-                  </div>
-                </div>
-              </td>
-
-              <!-- 7. Uptime -->
-              <td class="px-5 py-3.5 font-mono text-xs text-slate-300">
-                {{ formatUptime(node.uptime_seconds) }}
-              </td>
             </tr>
           </tbody>
         </table>
@@ -246,11 +224,11 @@
     <!-- 1. Add Node Modal -->
     <Teleport to="body">
       <div v-if="showAddModal" @click.self="showAddModal = false" class="fixed inset-0 bg-slate-950/80 backdrop-blur-sm z-[100] flex items-center justify-center p-4">
-      <div class="bg-slate-900 border border-slate-800 rounded-2xl w-full max-w-lg p-6 shadow-2xl space-y-6">
+      <div class="bg-slate-900 border border-slate-800 rounded-2xl w-full max-w-lg p-6 shadow-2xl space-y-5">
         <div class="flex items-center justify-between">
           <div>
-            <h2 class="text-lg font-bold text-white">添加接入主机 (生成专属 HostId)</h2>
-            <p class="text-xs text-slate-400 mt-0.5">为该 VPS 实例分配独一无二的 HostId 与专属 WSS 反向长连接入地址</p>
+            <h2 class="text-lg font-bold text-white">添加接入主机</h2>
+            <p class="text-xs text-slate-400 mt-0.5">分配主机 UUID 凭证与 WSS 长连接入地址</p>
           </div>
           <button @click="showAddModal = false" class="text-slate-400 hover:text-white">
             <X class="w-5 h-5" />
@@ -265,11 +243,11 @@
             <select
               id="node-add-owner"
               v-model="addForm.owner_id"
-              class="w-full px-4 py-2.5 rounded-xl bg-slate-950 border border-slate-800 text-slate-100 text-sm focus:border-emerald-500 focus:outline-none"
+              class="w-full px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-800 text-slate-100 text-sm focus:border-emerald-500 focus:outline-none"
             >
               <option v-for="t in tenantList" :key="t.id" :value="t.id">{{ t.username }} ({{ t.role === 'admin' ? '超管' : '租户' }})</option>
             </select>
-            <p class="text-[11px] text-slate-500 mt-1">选中的租户将独占纳管该主机，且仅在该租户的订阅中下发。</p>
+            <p class="text-[11px] text-slate-500 mt-1">选中的租户将独占纳管该主机</p>
           </div>
 
           <div>
@@ -281,10 +259,10 @@
               v-model="addForm.name"
               type="text"
               required
-              class="w-full px-4 py-2.5 rounded-xl bg-slate-950 border border-slate-800 text-slate-100 placeholder-slate-500 text-sm focus:border-emerald-500 focus:outline-none"
+              class="w-full px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-800 text-slate-100 placeholder-slate-500 text-sm focus:border-emerald-500 focus:outline-none"
               placeholder="例如: US01 / 香港BGP"
             />
-            <p class="text-[11px] text-slate-500 mt-1">每个备注名对应一台 VPS 实例并分配独一无二的 HostId。订阅节点名格式为“<code class="text-emerald-400 font-mono">备注名-IP</code>”（如：<code class="text-emerald-400 font-mono">US01-vless-45.1.1.1</code>）</p>
+            <p class="text-[11px] text-slate-500 mt-1">订阅节点名格式形如“<code class="text-emerald-400 font-mono">备注名-IP</code>”</p>
           </div>
 
           <div>
@@ -295,10 +273,9 @@
               id="node-add-server-ip"
               v-model="addForm.server_ip"
               type="text"
-              class="w-full px-4 py-2.5 rounded-xl bg-slate-950 border border-slate-800 text-slate-100 placeholder-slate-500 text-sm focus:border-emerald-500 focus:outline-none font-mono"
+              class="w-full px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-800 text-slate-100 placeholder-slate-500 text-sm focus:border-emerald-500 focus:outline-none font-mono"
               placeholder="留空则在子节点连接时自动识别（推荐）"
             />
-            <p class="text-[11px] text-slate-500 mt-1">若留空，当子节点启动并连入 Master 时，系统会自动提取其连接来源 IP 填入</p>
           </div>
 
           <!-- Inbound Templates Multi-Select Dropdown -->
@@ -388,7 +365,7 @@
     <!-- 2. Deploy Instructions Modal -->
     <Teleport to="body">
       <div v-if="showInstructionModal" @click.self="showInstructionModal = false" class="fixed inset-0 bg-slate-950/85 backdrop-blur-sm z-[100] flex items-center justify-center p-4">
-      <div class="bg-slate-900 border border-slate-800 rounded-2xl w-full max-w-2xl p-6 shadow-2xl space-y-5">
+      <div class="bg-slate-900 border border-slate-800 rounded-2xl w-full max-w-2xl p-6 shadow-2xl space-y-4">
         <div class="flex items-center justify-between">
           <div>
             <div class="flex items-center space-x-2">
@@ -397,7 +374,7 @@
                 {{ activeInstructionNode?.name || '新主机' }}
               </span>
             </div>
-            <p class="text-xs text-slate-400 mt-0.5">请在目标 VPS 终端执行以下任一命令，容器启动后主机将反向长连 Master 并亮起绿灯</p>
+            <p class="text-xs text-slate-400 mt-0.5">在目标 VPS 执行以下命令，容器启动后自动长连接入</p>
           </div>
           <button @click="showInstructionModal = false" class="text-slate-400 hover:text-white">
             <X class="w-5 h-5" />
@@ -405,17 +382,17 @@
         </div>
 
         <!-- Master Endpoint Config in Modal -->
-        <div class="p-3.5 rounded-xl bg-slate-950/80 border border-slate-800 space-y-2">
+        <div class="p-3 rounded-xl bg-slate-950/80 border border-slate-800 space-y-2 text-xs">
           <div class="flex items-center justify-between">
-            <span class="text-xs font-semibold text-slate-300">Master 接入公网地址 (目标 VPS 连接的目标)：</span>
-            <div class="flex items-center space-x-3 text-xs">
-              <label class="flex items-center space-x-1.5 text-slate-300 cursor-pointer">
+            <span class="font-semibold text-slate-300">Master 接入公网地址：</span>
+            <div class="flex items-center space-x-3">
+              <label class="flex items-center space-x-1 text-slate-300 cursor-pointer">
                 <input type="radio" value="wss" v-model="joinScheme" class="accent-emerald-500" />
-                <span>WSS (TLS加密)</span>
+                <span>WSS (TLS)</span>
               </label>
-              <label class="flex items-center space-x-1.5 text-slate-300 cursor-pointer">
+              <label class="flex items-center space-x-1 text-slate-300 cursor-pointer">
                 <input type="radio" value="ws" v-model="joinScheme" class="accent-emerald-500" />
-                <span>WS (明文端口)</span>
+                <span>WS (明文)</span>
               </label>
             </div>
           </div>
@@ -423,28 +400,25 @@
             <input
               v-model="customMasterHost"
               type="text"
-              class="flex-1 px-3 py-2 rounded-lg bg-slate-900 border border-slate-800 font-mono text-xs text-slate-100 placeholder-slate-500 focus:border-emerald-500 focus:outline-none"
+              class="flex-1 px-3 py-1.5 rounded-lg bg-slate-900 border border-slate-800 font-mono text-xs text-slate-100 placeholder-slate-500 focus:border-emerald-500 focus:outline-none"
               placeholder="例如: 203.0.113.10:3000 或 panel.example.com"
             />
             <button
               v-if="detectedMasterHost && customMasterHost !== detectedMasterHost"
               @click="customMasterHost = detectedMasterHost"
               type="button"
-              class="px-2.5 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs transition whitespace-nowrap"
+              class="px-2 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs transition whitespace-nowrap"
               title="还原为自动探测地址"
             >
               还原探测
             </button>
           </div>
-          <p class="text-[11px] text-slate-500">
-            提示：目标 VPS 将通过此地址反向长连 Master。若此处显示为 localhost，远程机器将无法接入，请修改为 Master 宿主机的公网 IP 或解析域名。
-          </p>
         </div>
 
         <!-- Pinned Permanent WSS (JOIN_URL) -->
-        <div class="p-3.5 rounded-xl bg-slate-950/80 border border-slate-800 space-y-1.5">
+        <div class="p-3 rounded-xl bg-slate-950/80 border border-slate-800 space-y-1.5">
           <div class="flex justify-between items-center text-xs">
-            <span class="text-slate-400 font-medium">专属 WSS 接入链接 (含独一无二的 HostId 凭证)：</span>
+            <span class="text-slate-400 font-medium">专属 WSS 接入链接：</span>
             <button
               @click="copyCommand(activeJoinURL, 'join_url')"
               class="px-2.5 py-1 rounded bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-medium transition flex items-center space-x-1"
@@ -458,7 +432,7 @@
             type="text"
             readonly
             :value="activeJoinURL"
-            class="w-full px-3 py-2 rounded-lg bg-slate-900 border border-slate-800 font-mono text-xs text-emerald-400 focus:outline-none select-all font-medium"
+            class="w-full px-3 py-1.5 rounded-lg bg-slate-900 border border-slate-800 font-mono text-xs text-emerald-400 focus:outline-none select-all font-medium"
           />
         </div>
 
@@ -468,7 +442,7 @@
             v-for="tab in tabs"
             :key="tab.id"
             @click="activeTab = tab.id"
-            class="px-3.5 py-1.5 rounded-lg text-xs font-medium transition"
+            class="px-3 py-1 rounded-lg text-xs font-medium transition"
             :class="activeTab === tab.id ? 'bg-emerald-500 text-slate-950 font-semibold' : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800'"
           >
             {{ tab.name }}
@@ -494,7 +468,7 @@
         <!-- Tab 2: Docker Compose -->
         <div v-if="activeTab === 'compose'" class="space-y-2">
           <div class="flex justify-between items-center text-xs text-slate-400">
-            <span>在目标 VPS 创建 <code class="text-slate-200 font-mono">docker-compose.yml</code> 并执行 <code class="text-slate-200 font-mono">docker compose up -d</code>：</span>
+            <span>创建 docker-compose.yml 并执行 docker compose up -d：</span>
             <button
               @click="copyCommand(dockerComposeSnippet, 'compose')"
               class="px-2.5 py-1 rounded bg-slate-800 hover:bg-slate-700 text-slate-200 font-medium transition flex items-center space-x-1"
@@ -523,16 +497,10 @@
           <pre class="p-3.5 rounded-xl bg-slate-950 border border-slate-800 font-mono text-xs text-slate-300 overflow-x-auto whitespace-pre-wrap leading-relaxed">{{ shellCommand }}</pre>
         </div>
 
-        <!-- Tip card -->
-        <div class="p-3.5 rounded-xl bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 text-xs flex items-start space-x-2 leading-relaxed">
-          <span class="font-bold">💡 提示：</span>
-          <span>在目标 VPS 执行上述命令后，本页面列表中对应的节点行将<b>自动变为绿色在线状态 🟢</b>。订阅中将自动为各连入的 VPS 生成形如 <code class="font-mono font-bold">{{ activeInstructionNode?.name || 'US01' }}-IP</code> 的代理节点！</span>
-        </div>
-
         <div class="flex justify-end pt-2">
           <button
             @click="showInstructionModal = false"
-            class="px-5 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 font-medium text-sm transition"
+            class="px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 font-medium text-xs sm:text-sm transition"
           >
             关闭
           </button>
@@ -544,14 +512,14 @@
     <!-- 3. Edit Node Host Modal -->
     <Teleport to="body">
       <div v-if="showEditModal" @click.self="showEditModal = false" class="fixed inset-0 bg-slate-950/80 backdrop-blur-sm z-[100] flex items-center justify-center p-4">
-      <div class="bg-slate-900 border border-slate-800 rounded-2xl w-full max-w-lg p-6 shadow-2xl space-y-6">
+      <div class="bg-slate-900 border border-slate-800 rounded-2xl w-full max-w-lg p-6 shadow-2xl space-y-5">
         <div class="flex items-center justify-between">
           <div>
             <h2 class="text-lg font-bold text-white flex items-center space-x-2">
               <span>主机属性配置</span>
               <span v-if="editForm.is_local" class="px-2 py-0.5 rounded text-xs bg-indigo-500/15 text-indigo-400 border border-indigo-500/30">本机 Master</span>
             </h2>
-            <p class="text-xs text-slate-400 mt-0.5">修改该 VPS 主机的备注名称、业务端口、IP 分发模式及子节点属性</p>
+            <p class="text-xs text-slate-400 mt-0.5">修改该 VPS 主机的备注名称与挂载协议</p>
           </div>
           <button @click="showEditModal = false" class="text-slate-400 hover:text-white">
             <X class="w-5 h-5" />
@@ -568,10 +536,9 @@
               v-model="editForm.name"
               type="text"
               required
-              class="w-full px-4 py-2.5 rounded-xl bg-slate-950 border border-slate-800 text-slate-100 placeholder-slate-500 text-sm focus:border-emerald-500 focus:outline-none"
+              class="w-full px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-800 text-slate-100 placeholder-slate-500 text-sm focus:border-emerald-500 focus:outline-none"
               placeholder="例如: US01 / 香港BGP / Master"
             />
-            <p class="text-[11px] text-slate-500 mt-1">订阅节点格式将命名为“<code class="text-emerald-400 font-mono">{{ editForm.name || 'Node' }}-IP</code>”</p>
           </div>
 
           <div>
@@ -582,10 +549,9 @@
               id="node-edit-server-ip"
               v-model="editForm.server_ip"
               type="text"
-              class="w-full px-4 py-2.5 rounded-xl bg-slate-950 border border-slate-800 text-slate-100 font-mono text-sm focus:border-emerald-500 focus:outline-none"
+              class="w-full px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-800 text-slate-100 font-mono text-sm focus:border-emerald-500 focus:outline-none"
               placeholder="留空则自动识别使用（多 IP 逗号隔开）"
             />
-            <p class="text-[11px] text-slate-500 mt-1">填写公网 IP 或域名，订阅下发时将以此地址作为连接目标</p>
           </div>
 
           <!-- Inbound Templates Multi-Select Dropdown for Edit Modal -->
@@ -659,7 +625,7 @@
               type="text"
               readonly
               :value="editForm.token"
-              class="w-full px-4 py-2 rounded-xl bg-slate-950 border border-slate-800 font-mono text-xs text-slate-400 select-all focus:outline-none"
+              class="w-full px-3.5 py-2 rounded-xl bg-slate-950 border border-slate-800 font-mono text-xs text-slate-400 select-all focus:outline-none"
             />
           </div>
 
@@ -688,11 +654,9 @@
 </template>
 
 <script setup>
-import { ref, reactive, computed, onMounted, onUnmounted } from 'vue'
-import { Plus, Trash2, X, Copy, Terminal, Check, Sliders, Power, Eye, EyeOff, Globe, Users, ChevronDown } from 'lucide-vue-next'
-import { request, getToken, getUser } from '../api'
-// Controller version (no "v"), loaded by the router before any view renders;
-// the docker install commands pin the image to it.
+import { ref, reactive, computed, onMounted } from 'vue'
+import { Plus, Trash2, X, Copy, Terminal, Check, Sliders, Power, Eye, EyeOff, Users, ChevronDown } from 'lucide-vue-next'
+import { request, getUser } from '../api'
 import { appVersion } from '../router'
 import PageSkeleton from '../components/PageSkeleton.vue'
 import { usePageRead } from '../composables/usePageRead'
@@ -768,7 +732,7 @@ const addForm = reactive({
 
 const dockerRunCommand = computed(() => {
   const masterUrl = `${window.location.protocol}//${customMasterHost.value.trim() || window.location.host}`
-  const token = activeInstructionNode.value?.token || ""
+  const token = activeInstructionNode.value?.token || ''
   return `docker run -d \\
   --name sm-node \\
   --restart always \\
@@ -781,7 +745,7 @@ const dockerRunCommand = computed(() => {
 
 const dockerComposeSnippet = computed(() => {
   const masterUrl = `${window.location.protocol}//${customMasterHost.value.trim() || window.location.host}`
-  const token = activeInstructionNode.value?.token || ""
+  const token = activeInstructionNode.value?.token || ''
   return `services:
   sm-node:
     image: ghcr.io/akkunyo/sm-node:${appVersion.value}
@@ -797,13 +761,12 @@ const dockerComposeSnippet = computed(() => {
 
 const shellCommand = computed(() => {
   const masterUrl = `${window.location.protocol}//${customMasterHost.value.trim() || window.location.host}`
-  const token = activeInstructionNode.value?.token || ""
+  const token = activeInstructionNode.value?.token || ''
   return `curl -fsSL https://raw.githubusercontent.com/AkkunYo/sm-ui-worker/main/scripts/install.sh | \\
   MASTER_URL="${masterUrl}" \\
   NODE_TOKEN="${token}" \\
   bash`
 })
-
 
 async function toggleNodePower(node) {
   togglingId.value = node.id
@@ -832,6 +795,7 @@ function formatUptime(seconds) {
   if (hours > 0) return `${hours}h ${mins}m`
   return `${mins}m`
 }
+
 function openAddModal() {
   addDropdownOpen.value = false
   addForm.name = ''
@@ -843,14 +807,8 @@ function openAddModal() {
 
 function openInstructionModal(node) {
   activeInstructionNode.value = node
-
-  // Find Master local node
   const master = nodes.value.find(n => n.is_local)
-
-  // Auto detect scheme
   joinScheme.value = window.location.protocol === 'https:' ? 'wss' : 'ws'
-
-  // Auto detect host
   let bestHost = window.location.host
   if (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') {
     if (master && master.server_ip && master.server_ip !== '127.0.0.1' && master.server_ip !== 'localhost') {
@@ -858,7 +816,6 @@ function openInstructionModal(node) {
       bestHost = `${master.server_ip}:${port}`
     }
   }
-
   detectedMasterHost.value = bestHost
   customMasterHost.value = bestHost
   activeTab.value = 'docker'
@@ -959,7 +916,7 @@ async function saveEditNode() {
       server_ip: editForm.server_ip,
       template_ids: editForm.template_ids
     }
-    const res = await request(`/api/v1/nodes/${editForm.id}`, {
+    await request(`/api/v1/nodes/${editForm.id}`, {
       method: 'PUT',
       body: JSON.stringify(payload)
     })

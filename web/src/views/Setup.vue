@@ -23,8 +23,9 @@
             type="text"
             required
             class="w-full px-4 py-2.5 rounded-xl bg-slate-950 border border-slate-800 text-slate-100 placeholder-slate-500 focus:outline-none focus:border-emerald-500 transition text-sm"
-            placeholder="admin"
+            placeholder="例如: zkyml / admin"
           />
+          <p class="text-[11px] text-slate-500 mt-1">设置首个超级管理员用户名（如 zkyml / admin）</p>
         </div>
 
         <div>

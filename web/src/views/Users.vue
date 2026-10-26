@@ -1,13 +1,13 @@
 <template>
-  <div class="p-4 sm:p-8 space-y-8 max-w-7xl mx-auto">
-    <div class="flex items-center justify-between">
+  <div class="p-4 sm:p-6 space-y-5 max-w-7xl mx-auto">
+    <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
       <div>
-        <h1 class="text-2xl font-bold tracking-tight text-white">租户用户管理 (Tenants)</h1>
-        <p class="text-sm text-slate-400 mt-1">管理多租户独立空间，各租户拥有专属 VPS 主机池与完全隔离的节点订阅</p>
+        <h1 class="text-xl sm:text-2xl font-bold tracking-tight text-white">租户用户管理 (Tenants)</h1>
+        <p class="text-xs sm:text-sm text-slate-400 mt-0.5">管理多租户独立空间，各租户拥有专属 VPS 主机池与完全隔离的节点订阅</p>
       </div>
       <button
         @click="openAddModal"
-        class="px-4 py-2 rounded-xl bg-violet-500 hover:bg-violet-600 text-white font-semibold text-sm transition flex items-center space-x-2 shadow-lg shadow-violet-500/20"
+        class="px-4 py-2.5 rounded-xl bg-violet-500 hover:bg-violet-600 text-white font-semibold text-sm transition flex items-center justify-center space-x-2 shadow-lg shadow-violet-500/20 self-start sm:self-auto shrink-0"
       >
         <UserPlus class="w-4 h-4" />
         <span>添加租户用户</span>
@@ -22,20 +22,20 @@
     <!-- Users Table -->
     <div class="bg-slate-900 border border-slate-800 rounded-2xl overflow-hidden shadow-xl">
       <div class="overflow-x-auto">
-        <table class="w-full text-left text-sm text-slate-300">
-          <thead class="bg-slate-950/60 text-xs uppercase text-slate-400 border-b border-slate-800">
+        <table class="w-full text-left text-xs sm:text-sm text-slate-300">
+          <thead class="bg-slate-950/60 text-xs uppercase text-slate-400 border-b border-slate-800 select-none">
             <tr>
-              <th class="px-5 py-3.5 font-semibold">租户名称</th>
-              <th class="px-5 py-3.5 font-semibold">系统权限</th>
-              <th class="px-5 py-3.5 font-semibold">状态</th>
-              <th class="px-5 py-3.5 font-semibold">独占主机数</th>
-              <th class="px-5 py-3.5 font-semibold">流量统计 / 配额</th>
-              <th class="px-5 py-3.5 font-semibold">有效期</th>
-              <th class="px-5 py-3.5 font-semibold">专属订阅</th>
-              <th class="px-5 py-3.5 font-semibold text-right">操作</th>
+              <th class="px-4 py-3 font-semibold">租户名称</th>
+              <th class="px-3 py-3 font-semibold">系统权限</th>
+              <th class="px-3 py-3 font-semibold">状态</th>
+              <th class="px-3 py-3 font-semibold">独占主机</th>
+              <th class="px-4 py-3 font-semibold">流量统计 / 配额</th>
+              <th class="px-3 py-3 font-semibold">有效期</th>
+              <th class="px-3 py-3 font-semibold">专属订阅</th>
+              <th class="px-4 py-3 font-semibold text-right">操作</th>
             </tr>
           </thead>
-          <tbody class="divide-y divide-slate-800">
+          <tbody class="divide-y divide-slate-800/80">
             <tr v-if="loading && users.length === 0">
               <td colspan="8" class="px-6 py-12 text-center text-slate-500">正在加载租户列表…</td>
             </tr>
@@ -43,23 +43,27 @@
               <td colspan="8" class="px-6 py-12 text-center text-slate-500">暂无租户用户，点击右上角添加新租户。</td>
             </tr>
             <tr v-for="user in users" :key="user.id" class="hover:bg-slate-800/30 transition">
-              <td class="px-5 py-4 font-semibold text-white">
-                <div class="flex items-center space-x-2">
-                  <span class="w-7 h-7 rounded-lg bg-violet-500/10 text-violet-300 border border-violet-500/20 flex items-center justify-center text-xs font-bold uppercase">
+              <td class="px-4 py-3 font-medium text-white">
+                <div class="flex items-center space-x-2.5">
+                  <span class="w-6 h-6 rounded-lg bg-violet-500/10 text-violet-300 border border-violet-500/20 flex items-center justify-center text-[11px] font-bold uppercase shrink-0">
                     {{ user.username.substring(0, 1) }}
                   </span>
-                  <span>{{ user.username }}</span>
+                  <span class="truncate font-semibold">{{ user.username }}</span>
+                  <span
+                    v-if="user.id === currentUserId"
+                    class="px-1.5 py-0.5 rounded text-[10px] font-medium bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 shrink-0 font-mono"
+                  >我</span>
                 </div>
               </td>
-              <td class="px-5 py-4">
+              <td class="px-3 py-3">
                 <span
-                  class="px-2 py-0.5 rounded text-[11px] font-medium"
+                  class="px-2 py-0.5 rounded text-[11px] font-medium font-mono"
                   :class="user.role === 'admin' ? 'bg-amber-500/10 text-amber-400 border border-amber-500/20' : 'bg-blue-500/10 text-blue-400 border border-blue-500/20'"
                 >
                   {{ user.role === 'admin' ? '超级管理员' : '普通租户' }}
                 </span>
               </td>
-              <td class="px-5 py-4">
+              <td class="px-3 py-3">
                 <span
                   class="inline-flex items-center px-2 py-0.5 rounded text-[11px] font-medium"
                   :class="user.status === 1 ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20' : 'bg-rose-500/10 text-rose-400 border border-rose-500/20'"
@@ -68,40 +72,49 @@
                   {{ user.status === 1 ? '正常' : '已停用' }}
                 </span>
               </td>
-              <td class="px-5 py-4">
-                <span class="font-mono text-slate-200">{{ user.node_count || 0 }} 台</span>
+              <td class="px-3 py-3">
+                <span class="font-mono text-slate-200 text-xs">{{ user.node_count || 0 }} 台</span>
               </td>
-              <td class="px-5 py-4">
-                <div class="text-xs">
-                  <span class="text-slate-200">{{ formatBytes((user.used_up_bytes || 0) + (user.used_down_bytes || 0)) }}</span>
-                  <span class="text-slate-500"> / </span>
-                  <span class="text-slate-400">{{ user.traffic_limit_bytes ? formatBytes(user.traffic_limit_bytes) : '无限制' }}</span>
+              <td class="px-4 py-3">
+                <div class="space-y-1">
+                  <div class="text-xs font-mono tabular-nums">
+                    <span class="text-slate-200 font-semibold">{{ formatBytes((user.used_up_bytes || 0) + (user.used_down_bytes || 0)) }}</span>
+                    <span class="text-slate-500 mx-1">/</span>
+                    <span class="text-slate-400">{{ user.traffic_limit_bytes ? formatBytes(user.traffic_limit_bytes) : '无限制' }}</span>
+                  </div>
+                  <div v-if="user.traffic_limit_bytes > 0" class="w-24 h-1 bg-slate-800 rounded-full overflow-hidden" aria-hidden="true">
+                    <div
+                      class="h-full rounded-full transition-all"
+                      :class="((user.used_up_bytes || 0) + (user.used_down_bytes || 0)) / user.traffic_limit_bytes > 0.9 ? 'bg-rose-500' : 'bg-violet-500'"
+                      :style="{ width: `${Math.min(100, Math.max(0, (((user.used_up_bytes || 0) + (user.used_down_bytes || 0)) / user.traffic_limit_bytes) * 100))}%` }"
+                    ></div>
+                  </div>
                 </div>
               </td>
-              <td class="px-5 py-4 text-xs text-slate-400">
+              <td class="px-3 py-3 text-xs text-slate-400 font-mono">
                 {{ user.expire_at ? new Date(user.expire_at).toLocaleDateString() : '永久有效' }}
               </td>
-              <td class="px-5 py-4">
+              <td class="px-3 py-3">
                 <button
                   @click="copySubUrl(user)"
-                  class="p-1.5 text-slate-400 hover:text-violet-300 hover:bg-violet-500/10 rounded-lg transition flex items-center space-x-1 text-xs"
+                  class="px-2 py-1 text-slate-300 hover:text-violet-200 bg-slate-800/60 hover:bg-violet-500/20 border border-slate-700/60 rounded-lg transition flex items-center space-x-1 text-xs font-mono"
                   title="复制该租户专属订阅地址"
                 >
                   <Link2 class="w-3.5 h-3.5" />
                   <span>复制订阅</span>
                 </button>
               </td>
-              <td class="px-5 py-4 text-right">
-                <div class="flex items-center justify-end space-x-2">
+              <td class="px-4 py-3 text-right">
+                <div class="flex items-center justify-end space-x-1.5">
                   <button
                     @click="openEditModal(user)"
-                    class="p-1.5 text-slate-400 hover:text-white hover:bg-slate-800 rounded-lg transition"
+                    class="p-1.5 text-slate-400 hover:text-emerald-400 hover:bg-emerald-500/10 rounded-lg transition"
                     title="编辑租户信息"
                   >
                     <Edit3 class="w-3.5 h-3.5" />
                   </button>
                   <button
-                    v-if="user.id !== 1"
+                    v-if="user.id !== currentUserId && user.role !== 'admin'"
                     @click="deleteUser(user)"
                     class="p-1.5 text-slate-400 hover:text-rose-400 hover:bg-rose-500/10 rounded-lg transition"
                     title="删除租户"
@@ -169,7 +182,11 @@
           </div>
 
           <form @submit.prevent="submitEditUser" class="space-y-4">
-            <div>
+            <div v-if="editForm.id === currentUserId" class="p-3 rounded-xl bg-slate-950/80 border border-slate-800 text-xs text-slate-400 flex items-center justify-between">
+              <span>💡 修改本人登录密码请前往左侧导航「账号设置」</span>
+              <router-link to="/settings" class="text-violet-400 hover:text-violet-300 underline shrink-0 font-medium ml-2">前往设置</router-link>
+            </div>
+            <div v-else>
               <label for="user-edit-password" class="block text-xs font-semibold text-slate-300 uppercase tracking-wider mb-1.5">重置登录密码 (留空则保持不变)</label>
               <input id="user-edit-password" v-model="editForm.password" type="password" minlength="6" placeholder="留空不修改" class="w-full px-4 py-2.5 rounded-xl bg-slate-950 border border-slate-800 text-sm text-white focus:outline-none focus:border-violet-500" />
             </div>
@@ -212,9 +229,12 @@
 </template>
 
 <script setup>
-import { ref, reactive, onMounted } from 'vue'
+import { ref, reactive, computed, onMounted } from 'vue'
 import { UserPlus, Link2, Edit3, Trash2, X } from 'lucide-vue-next'
-import { request, formatBytes } from '../api'
+import { request, formatBytes, getUser } from '../api'
+
+const currentUser = computed(() => getUser())
+const currentUserId = computed(() => currentUser.value?.id)
 
 const users = ref([])
 const loading = ref(false)
@@ -311,7 +331,7 @@ async function submitEditUser() {
       clear_expiry: !editForm.expire_at,
       expire_at: editForm.expire_at ? new Date(editForm.expire_at).toISOString() : null
     }
-    if (editForm.password) {
+    if (editForm.id !== currentUserId.value && editForm.password) {
       payload.password = editForm.password
     }
     await request(`/api/v1/users/${editForm.id}`, {

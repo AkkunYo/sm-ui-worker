@@ -1,9 +1,9 @@
 <template>
-  <div class="subscription-page p-4 md:p-8 max-w-6xl mx-auto space-y-6">
-    <header class="flex flex-wrap items-center justify-between gap-4">
+  <div class="subscription-page p-4 sm:p-6 max-w-7xl mx-auto space-y-5">
+    <header class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
       <div class="flex items-center gap-3">
-        <div class="rounded-2xl p-3 bg-violet-500/15 text-violet-300"><Link2 class="w-6 h-6" /></div>
-        <div><h1 class="text-2xl font-bold text-white">订阅链接</h1><p class="text-sm text-slate-400 mt-1">一份订阅，连接全部节点</p></div>
+        <div class="rounded-xl p-2.5 bg-violet-500/15 text-violet-300"><Link2 class="w-5 h-5" /></div>
+        <div><h1 class="text-xl sm:text-2xl font-bold tracking-tight text-white">订阅链接</h1><p class="text-xs sm:text-sm text-slate-400 mt-0.5">一份订阅，自动聚合全部节点与客户端直连配置</p></div>
       </div>
       <button class="sub-button" :disabled="loading" @click="load()"><RefreshCw class="w-4 h-4" :class="{ 'animate-spin': loading }" />刷新</button>
     </header>
@@ -14,13 +14,13 @@
     <p v-if="notice" role="status" class="rounded-xl bg-violet-500/10 text-violet-200 p-3">{{ notice }}</p>
 
     <!-- Admin Subscription Control Bar (Option B & C) -->
-    <div v-if="isAdmin" class="bg-slate-900 border border-slate-800 rounded-2xl p-4 sm:p-5 space-y-4 shadow-xl">
+    <div v-if="isAdmin" class="bg-slate-900 border border-slate-800 rounded-2xl p-3.5 sm:p-4 space-y-3 shadow-xl">
       <div class="flex flex-wrap items-center justify-between gap-3">
-        <div class="flex items-center space-x-2 text-sm font-semibold text-white">
+        <div class="flex items-center space-x-2 text-xs font-semibold text-white">
           <Sparkles class="w-4 h-4 text-violet-400" />
           <span>超级管理员视角控制</span>
         </div>
-        <span class="text-xs text-slate-400">支持全集群聚合测速巡检，以及免登代客预览与分发</span>
+        <span class="text-[11px] text-slate-400">支持全集群聚合测速巡检与免登代客预览</span>
       </div>
 
       <div class="flex flex-wrap items-center gap-3">
@@ -29,50 +29,42 @@
           <button
             type="button"
             @click="setAdminMode('all')"
-            class="px-3.5 py-1.5 rounded-lg font-medium transition"
+            class="px-3 py-1 rounded-lg font-medium transition"
             :class="adminMode === 'all' ? 'bg-violet-500/20 text-violet-300 border border-violet-500/30' : 'text-slate-400 hover:text-white'"
           >
             ⚡️ 全网节点聚合 (God-mode)
           </button>
           <button
             type="button"
-            @click="setAdminMode('admin')"
-            class="px-3.5 py-1.5 rounded-lg font-medium transition"
-            :class="adminMode === 'admin' ? 'bg-slate-800 text-white' : 'text-slate-400 hover:text-white'"
-          >
-            👤 超管自用节点
-          </button>
-          <button
-            type="button"
             @click="setAdminMode('tenant')"
-            class="px-3.5 py-1.5 rounded-lg font-medium transition"
+            class="px-3 py-1 rounded-lg font-medium transition"
             :class="adminMode === 'tenant' ? 'bg-amber-500/20 text-amber-300 border border-amber-500/30' : 'text-slate-400 hover:text-white'"
           >
-            👥 租户专属预览
+            👤 租户专属订阅
           </button>
         </div>
 
-        <!-- Tenant Selector for Preview Mode -->
-        <div v-if="adminMode === 'tenant'" class="flex items-center space-x-2">
+        <!-- Tenant Selector when in Tenant Exclusive Mode -->
+        <div v-if="adminMode === 'tenant' && tenantsList.length > 0" class="flex items-center space-x-2 text-xs">
+          <span class="text-slate-400 text-[11px]">当前租户:</span>
           <select
             v-model="selectedTenantId"
             @change="onTenantSelected"
-            class="px-3 py-1.5 rounded-xl bg-slate-950 border border-slate-700 text-xs text-white focus:outline-none"
+            class="px-2.5 py-1.5 rounded-lg bg-slate-950 border border-slate-700 text-xs text-white focus:outline-none"
           >
-            <option disabled value="">选择要预览的租户…</option>
             <option v-for="t in tenantsList" :key="t.id" :value="t.id">
-              {{ t.username }} ({{ t.node_count || 0 }} 台主机)
+              {{ t.username }}{{ t.id === currentUser?.id ? ' (我)' : '' }} ({{ t.node_count || 0 }} 台主机)
             </option>
           </select>
         </div>
       </div>
 
       <!-- Active Mode Description -->
-      <div v-if="adminMode === 'all'" class="px-3.5 py-2.5 rounded-xl bg-violet-500/10 border border-violet-500/20 text-xs text-violet-300 leading-relaxed flex items-center justify-between">
-        <span>⚡️ <strong>全网节点聚合巡检模式</strong>：当前订阅已聚合全集群所有租户的在线节点（共 {{ links.length }} 个配置），由超管凭据鉴权，可直接导入客户端测速巡检。</span>
+      <div v-if="adminMode === 'all'" class="px-3 py-2 rounded-xl bg-violet-500/10 border border-violet-500/20 text-xs text-violet-300 flex items-center justify-between">
+        <span>⚡️ <strong>全网节点聚合巡检模式 (God-mode)</strong>：当前订阅已聚合全集群所有租户的在线节点（共 {{ links.length }} 个配置），可直接导入客户端测速巡检。</span>
       </div>
-      <div v-else-if="adminMode === 'tenant' && selectedTenantId" class="px-3.5 py-2.5 rounded-xl bg-amber-500/10 border border-amber-500/20 text-xs text-amber-300 leading-relaxed flex items-center justify-between">
-        <span>👀 <strong>代客预览模式</strong>：当前正在代客预览租户 <strong>[{{ profile?.username }}]</strong> 的专属订阅内容。复制链接或二维码即可直接发给该租户使用。</span>
+      <div v-else-if="adminMode === 'tenant'" class="px-3 py-2 rounded-xl bg-slate-950/80 border border-slate-800 text-xs text-slate-300 flex items-center justify-between">
+        <span>👤 <strong>租户专属订阅模式</strong>：当前展示租户 <strong>[{{ profile?.username }}]</strong>{{ selectedTenantId === currentUser?.id ? '（超管本人）' : '（代客预览）' }} 的专属订阅与下发节点。</span>
       </div>
     </div>
 
@@ -94,25 +86,73 @@
         </router-link>
       </div>
 
-      <section class="rounded-2xl border border-violet-500/20 bg-gradient-to-br from-violet-950/50 to-slate-900 p-6 md:p-8 flex flex-col sm:flex-row gap-8 items-center">
-        <div class="relative w-40 h-40 shrink-0">
-          <svg viewBox="0 0 120 120" class="w-full h-full -rotate-90" aria-hidden="true"><circle cx="60" cy="60" r="52" fill="none" stroke="#312648" stroke-width="7" /><circle cx="60" cy="60" r="52" fill="none" :stroke="active ? '#a78bfa' : '#fb7185'" stroke-width="7" stroke-linecap="round" :stroke-dasharray="`${percent * 3.267} 326.7`" /></svg>
-          <div class="absolute inset-0 flex flex-col items-center justify-center"><span class="text-3xl font-semibold text-white">{{ profile.traffic_limit_bytes ? `${percent.toFixed(1)}%` : '∞' }}</span><span class="text-xs text-slate-400 mt-1">{{ profile.traffic_limit_bytes ? '已使用' : '不限流量' }}</span></div>
+      <!-- High-density Quota Status Strip (3x-ui / sui modern cloud style) -->
+      <section class="rounded-2xl border border-violet-500/20 bg-gradient-to-br from-violet-950/40 via-slate-900 to-slate-900 p-4 sm:p-5 space-y-4">
+        <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+          <div>
+            <div class="flex items-center gap-2">
+              <span class="text-xs font-semibold uppercase tracking-wider text-violet-400">
+                {{ profile.traffic_limit_bytes ? '订阅流量水位 (Quota Usage)' : '订阅用量概览' }}
+              </span>
+              <span
+                class="px-2 py-0.5 rounded-full text-[11px] font-mono font-medium border"
+                :class="active ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20' : 'bg-rose-500/10 text-rose-400 border-rose-500/20'"
+              >
+                {{ statusText }}
+              </span>
+            </div>
+            <div class="flex items-baseline gap-2.5 mt-1">
+              <span class="text-2xl sm:text-3xl font-bold tracking-tight text-white font-mono">
+                {{ formatBytes(profile.traffic_limit_bytes ? Math.max(0, profile.traffic_limit_bytes - used) : used) }}
+              </span>
+              <span class="text-xs text-slate-400 font-mono">
+                {{ profile.traffic_limit_bytes ? `/ 配额 ` + formatBytes(profile.traffic_limit_bytes) : '累计已用' }}
+              </span>
+              <span v-if="profile.traffic_limit_bytes" class="text-xs font-mono font-semibold" :class="percent > 90 ? 'text-rose-400' : percent > 75 ? 'text-amber-400' : 'text-violet-300'">
+                (已用 {{ percent.toFixed(1) }}%)
+              </span>
+            </div>
+          </div>
+          <div class="sm:text-right text-xs text-slate-400">
+            <div>有效期至 <span class="text-slate-200 font-mono">{{ profile.expire_at ? new Date(profile.expire_at).toLocaleDateString() : '永久有效' }}</span></div>
+            <div class="text-[11px] text-slate-500 mt-0.5">{{ daysLeft }}</div>
+          </div>
         </div>
-        <div class="flex-1 w-full">
-          <p class="text-sm text-slate-400">{{ profile.traffic_limit_bytes ? '剩余流量' : '累计使用' }}</p>
-          <p class="text-4xl font-semibold tracking-tight text-white mt-2">{{ formatBytes(profile.traffic_limit_bytes ? Math.max(0, profile.traffic_limit_bytes - used) : used) }}</p>
-          <dl class="grid grid-cols-2 lg:grid-cols-4 gap-x-6 gap-y-5 mt-6 text-sm">
-            <div><dt>订阅状态</dt><dd :class="active ? 'text-emerald-300' : 'text-rose-300'">{{ statusText }}</dd></div>
-            <div><dt>有效期</dt><dd>{{ profile.expire_at ? new Date(profile.expire_at).toLocaleDateString() : '永久有效' }}</dd></div>
-            <div><dt>累计上传</dt><dd>{{ formatBytes(profile.used_up_bytes) }}</dd></div>
-            <div><dt>累计下载</dt><dd>{{ formatBytes(profile.used_down_bytes) }}</dd></div>
-            <div><dt>总流量配额</dt><dd>{{ profile.traffic_limit_bytes ? formatBytes(profile.traffic_limit_bytes) : '无限制' }}</dd></div>
-            <div><dt>剩余天数</dt><dd>{{ daysLeft }}</dd></div>
-            <div><dt>可用配置</dt><dd>{{ links.length }} 个</dd></div>
-            <div><dt>凭据范围</dt><dd>全部节点共用</dd></div>
-          </dl>
+
+        <!-- Water Level Bar -->
+        <div class="space-y-1.5">
+          <div class="h-2 w-full rounded-full bg-slate-800 overflow-hidden" aria-hidden="true">
+            <div
+              class="h-full rounded-full transition-all duration-500"
+              :class="active ? (percent > 90 ? 'bg-rose-500' : percent > 75 ? 'bg-amber-500' : 'bg-gradient-to-r from-violet-500 to-indigo-400') : 'bg-rose-500'"
+              :style="{ width: `` + (profile.traffic_limit_bytes ? Math.min(100, Math.max(0, percent)) : 100) + `%` }"
+            ></div>
+          </div>
+          <div class="flex justify-between text-[11px] text-slate-400 font-mono tabular-nums">
+            <span>↑ 上传 {{ formatBytes(profile.used_up_bytes) }}</span>
+            <span>↓ 下载 {{ formatBytes(profile.used_down_bytes) }}</span>
+          </div>
         </div>
+
+        <!-- High-density Metrics Grid (preserving 订阅状态 label for test assertion) -->
+        <dl class="grid grid-cols-2 sm:grid-cols-4 gap-2.5 pt-2.5 border-t border-slate-800/80 text-xs">
+          <div class="p-2.5 rounded-xl bg-slate-950/40 border border-slate-800/60">
+            <dt class="text-slate-400 text-[11px]">订阅状态</dt>
+            <dd class="mt-0.5 font-semibold" :class="active ? 'text-emerald-300' : 'text-rose-300'">{{ statusText }}</dd>
+          </div>
+          <div class="p-2.5 rounded-xl bg-slate-950/40 border border-slate-800/60">
+            <dt class="text-slate-400 text-[11px]">可用配置</dt>
+            <dd class="mt-0.5 font-mono font-semibold text-white">{{ links.length }} 个节点</dd>
+          </div>
+          <div class="p-2.5 rounded-xl bg-slate-950/40 border border-slate-800/60">
+            <dt class="text-slate-400 text-[11px]">总流量配额</dt>
+            <dd class="mt-0.5 font-mono font-semibold text-slate-200">{{ profile.traffic_limit_bytes ? formatBytes(profile.traffic_limit_bytes) : '无限制' }}</dd>
+          </div>
+          <div class="p-2.5 rounded-xl bg-slate-950/40 border border-slate-800/60">
+            <dt class="text-slate-400 text-[11px]">凭据范围</dt>
+            <dd class="mt-0.5 font-semibold text-slate-200">全部节点共用</dd>
+          </div>
+        </dl>
       </section>
       <section class="rounded-2xl border border-slate-800 bg-slate-900 overflow-hidden">
         <div role="tablist" aria-label="订阅内容" class="flex border-b border-slate-800 px-4 sm:px-6 gap-4 sm:gap-7 overflow-x-auto">
@@ -242,6 +282,10 @@ async function loadTenants() {
     const list = await request('/api/v1/users')
     if (Array.isArray(list)) {
       tenantsList.value = list
+      if (!selectedTenantId.value) {
+        const self = list.find(t => t.id === currentUser.value?.id)
+        selectedTenantId.value = self?.id || list[0]?.id || ''
+      }
     }
   } catch (e) {}
 }
@@ -249,8 +293,8 @@ async function loadTenants() {
 function setAdminMode(mode) {
   adminMode.value = mode
   if (mode === 'tenant' && !selectedTenantId.value && tenantsList.value.length > 0) {
-    const firstTenant = tenantsList.value.find(t => t.id !== currentUser.value?.id) || tenantsList.value[0]
-    selectedTenantId.value = firstTenant?.id || ''
+    const self = tenantsList.value.find(t => t.id === currentUser.value?.id)
+    selectedTenantId.value = self?.id || tenantsList.value[0]?.id || ''
   }
   load()
 }
