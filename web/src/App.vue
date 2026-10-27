@@ -86,10 +86,25 @@
           </span>
         </div>
 
-        <div v-if="!isCollapsed" class="px-2 flex items-center justify-between text-[11px] text-slate-500 font-mono">
-          <span>Version</span>
-          <span>{{ appVersion ? `v${appVersion}` : '' }}</span>
-        </div>
+        <!-- GitHub repository link with controller version -->
+        <a
+          :href="repoUrl"
+          target="_blank"
+          rel="noopener noreferrer"
+          :title="`访问 GitHub 开源仓库${appVersion ? ` (v${appVersion})` : ''}`"
+          :aria-label="`GitHub 开源仓库${appVersion ? ` v${appVersion}` : ''}`"
+          class="group flex items-center rounded-lg text-[11px] text-slate-400 hover:text-slate-200 hover:bg-slate-800/60 transition"
+          :class="isCollapsed ? 'justify-center p-2.5' : 'justify-between px-2.5 py-1.5'"
+        >
+          <span class="flex items-center space-x-1.5">
+            <Github class="w-3.5 h-3.5 shrink-0 group-hover:text-white transition-colors" />
+            <span v-if="!isCollapsed" class="font-medium">GitHub</span>
+          </span>
+          <span v-if="!isCollapsed" class="flex items-center space-x-1 font-mono text-slate-500 group-hover:text-slate-300">
+            <span>{{ appVersion ? `v${appVersion}` : '' }}</span>
+            <ExternalLink class="w-3 h-3 opacity-60 group-hover:opacity-100" />
+          </span>
+        </a>
 
         <!-- Logout Button -->
         <button
@@ -141,7 +156,9 @@ import {
   Settings as SettingsIcon,
   LogOut,
   ChevronLeft,
-  ChevronRight
+  ChevronRight,
+  Github,
+  ExternalLink
 } from 'lucide-vue-next'
 import { removeToken, getUser, setUser, getToken, request } from './api'
 import { initializing, initializationError, retryInitialization, appVersion } from './router'
@@ -149,6 +166,7 @@ import PageSkeleton from './components/PageSkeleton.vue'
 
 const route = useRoute()
 const router = useRouter()
+const repoUrl = 'https://github.com/AkkunYo/sm-ui-worker'
 
 const isCollapsed = ref(localStorage.getItem('sm_sidebar_collapsed') === 'true')
 const currentUser = ref(getUser())
