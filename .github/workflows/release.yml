@@ -128,7 +128,7 @@ jobs:
             release-assets/sm-node-linux-amd64.tar.gz
             release-assets/sm-node-linux-arm64.tar.gz
             release-assets/sha256sums.txt
-          name: SM-UI Worker ${{ github.ref_name }}
+          name: ${{ github.ref_name }}
           tag_name: ${{ github.ref_name }}
           draft: false
           prerelease: false
